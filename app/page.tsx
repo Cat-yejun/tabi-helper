@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { supabase, signOut } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 import type { Expense, ItineraryItem } from "@/lib/types";
 import { Header } from "@/components/ui";
 
@@ -43,9 +43,9 @@ export default function Home() {
         title="Tabi"
         subtitle="일본 여행 도우미"
         right={
-          <button className="text-xs text-muted" onClick={() => signOut()}>
-            로그아웃
-          </button>
+          <Link href="/account" className="text-xs text-muted">
+            내 정보
+          </Link>
         }
       />
       <div className="space-y-5 p-4">

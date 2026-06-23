@@ -118,3 +118,10 @@ create policy "photos delete" on storage.objects
   for delete using (
     bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text
   );
+
+-- ============================================================
+--  마이그레이션: 가계부 시간, 번역 소스 구분 컬럼 추가
+--  (기존 테이블이 있어도 안전하게 재실행 가능)
+-- ============================================================
+alter table expenses add column if not exists purchase_time text;
+alter table translations add column if not exists source text default 'photo';

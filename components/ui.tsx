@@ -42,6 +42,18 @@ export function Empty({ title, hint }: { title: string; hint?: string }) {
   );
 }
 
+export function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
+      <button className="absolute right-4 top-4 rounded-full bg-white/20 px-3 py-1.5 text-sm text-white">
+        닫기
+      </button>
+    </div>
+  );
+}
+
 const catColor: Record<string, string> = {
   식비: "bg-torii/10 text-torii",
   식사: "bg-torii/10 text-torii",

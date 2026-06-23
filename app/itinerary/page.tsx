@@ -47,8 +47,10 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
         fare: (result.routes[0] as any).fare?.text,
         lines,
       });
-    } catch {
-      setErr("대중교통 경로를 찾지 못했어요");
+    } catch (e: any) {
+      const status = e?.code || e?.status || "UNKNOWN_ERROR";
+      console.error("Directions error:", status, e);
+      setErr(status === "ZERO_RESULTS" ? "대중교통 노선이 없어요" : `경로 확인 실패 (${status})`);
     } finally {
       setLoading(false);
     }
@@ -308,13 +310,49 @@ function ItineraryInner() {
 }
 
 function AISheet({ onClose, onDone }: { onClose: () => void; onDone: (id: string) => void }) {
+  const [tab, setTab] = useState<"text" | "pdf">("text");
   const [prompt, setPrompt] = useState("");
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [city, setCity] = useState("삿포로");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function generate() {
+  // 공통: AI 응답(plan)을 받아 DB에 일정표+항목으로 저장
+  async function savePlan(plan: any) {
+    const { data: trip, error } = await supabase
+      .from("itineraries")
+      .insert({
+        title: plan.title || `${city} 여행`,
+        start_date: plan.start_date || start || null,
+        end_date: plan.end_date || end || null,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    const rows: any[] = [];
+    (plan.days || []).forEach((d: any) => {
+      (d.items || []).forEach((it: any, i: number) => {
+        rows.push({
+          itinerary_id: trip.id,
+          day_date: d.date || null,
+          time: it.time || null,
+          place: it.place || "",
+          address: it.address || null,
+          lat: typeof it.lat === "number" ? it.lat : null,
+          lng: typeof it.lng === "number" ? it.lng : null,
+          category: it.category || "관광",
+          note: it.note || null,
+          sort_order: i,
+        });
+      });
+    });
+    if (rows.length) await supabase.from("itinerary_items").insert(rows);
+    onDone(trip.id);
+  }
+
+  async function generateFromText() {
     if (!prompt.trim()) return;
     setLoading(true);
     try {
@@ -325,38 +363,7 @@ function AISheet({ onClose, onDone }: { onClose: () => void; onDone: (id: string
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      const plan = json.data;
-
-      const { data: trip, error } = await supabase
-        .from("itineraries")
-        .insert({
-          title: plan.title || `${city} 여행`,
-          start_date: plan.start_date || start || null,
-          end_date: plan.end_date || end || null,
-        })
-        .select()
-        .single();
-      if (error) throw error;
-
-      const rows: any[] = [];
-      (plan.days || []).forEach((d: any) => {
-        (d.items || []).forEach((it: any, i: number) => {
-          rows.push({
-            itinerary_id: trip.id,
-            day_date: d.date || null,
-            time: it.time || null,
-            place: it.place || "",
-            address: it.address || null,
-            lat: typeof it.lat === "number" ? it.lat : null,
-            lng: typeof it.lng === "number" ? it.lng : null,
-            category: it.category || "관광",
-            note: it.note || null,
-            sort_order: i,
-          });
-        });
-      });
-      if (rows.length) await supabase.from("itinerary_items").insert(rows);
-      onDone(trip.id);
+      await savePlan(json.data);
     } catch (err: any) {
       alert("생성 실패: " + err.message);
     } finally {
@@ -364,19 +371,87 @@ function AISheet({ onClose, onDone }: { onClose: () => void; onDone: (id: string
     }
   }
 
+  async function generateFromPdf() {
+    if (!pdfFile) return;
+    setLoading(true);
+    try {
+      const pdfDataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result as string);
+        r.onerror = () => reject(new Error("PDF 를 읽지 못했습니다"));
+        r.readAsDataURL(pdfFile);
+      });
+      const res = await fetch("/api/itinerary/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdf: pdfDataUrl, city, startDate: start, endDate: end }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      await savePlan(json.data);
+    } catch (err: any) {
+      alert("PDF 분석 실패: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const canSubmit = tab === "text" ? !!prompt.trim() : !!pdfFile;
+
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/40">
       <div className="w-full max-w-md rounded-t-3xl bg-paper p-4">
         <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-line" />
         <h2 className="mb-1 font-round text-lg font-bold">AI 일정 만들기</h2>
-        <p className="mb-3 text-sm text-muted">가고 싶은 곳·분위기·기간을 자유롭게 적어보세요.</p>
-        <textarea
-          className="field"
-          rows={4}
-          placeholder="예) 첫날은 오타루 운하랑 오르골당, 둘째날은 삿포로 시내 맥주박물관이랑 라멘요코초. 너무 빡빡하지 않게."
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-        />
+
+        <div className="my-3 flex gap-2">
+          <button
+            onClick={() => setTab("text")}
+            className={`chip flex-1 justify-center py-2 ${tab === "text" ? "bg-ink text-white" : "bg-white text-muted border border-line"}`}
+          >
+            ✏️ 텍스트로 설명
+          </button>
+          <button
+            onClick={() => setTab("pdf")}
+            className={`chip flex-1 justify-center py-2 ${tab === "pdf" ? "bg-ink text-white" : "bg-white text-muted border border-line"}`}
+          >
+            📄 PDF 업로드
+          </button>
+        </div>
+
+        {tab === "text" ? (
+          <>
+            <p className="mb-2 text-sm text-muted">가고 싶은 곳·분위기·기간을 자유롭게 적어보세요.</p>
+            <textarea
+              className="field"
+              rows={4}
+              placeholder="예) 첫날은 오타루 운하랑 오르골당, 둘째날은 삿포로 시내 맥주박물관이랑 라멘요코초. 너무 빡빡하지 않게."
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+            />
+          </>
+        ) : (
+          <>
+            <p className="mb-2 text-sm text-muted">
+              미리 만든 일정표·예약 확인서 PDF를 올리면 AI가 읽고 동선까지 짜드려요.
+            </p>
+            <label className="card flex flex-col items-center gap-1 p-6 text-center text-sm text-muted">
+              <span className="text-2xl">📄</span>
+              {pdfFile ? (
+                <span className="font-medium text-ink">{pdfFile.name}</span>
+              ) : (
+                <span>PDF 파일 선택</span>
+              )}
+              <input
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+              />
+            </label>
+          </>
+        )}
+
         <div className="mt-3 grid grid-cols-3 gap-2">
           <input className="field" placeholder="도시" value={city} onChange={(e) => setCity(e.target.value)} />
           <input type="date" className="field" value={start} onChange={(e) => setStart(e.target.value)} />
@@ -386,13 +461,17 @@ function AISheet({ onClose, onDone }: { onClose: () => void; onDone: (id: string
           <button className="btn-ghost flex-1" onClick={onClose} disabled={loading}>
             취소
           </button>
-          <button className="btn-accent flex-1" onClick={generate} disabled={loading || !prompt.trim()}>
+          <button
+            className="btn-accent flex-1"
+            onClick={tab === "text" ? generateFromText : generateFromPdf}
+            disabled={loading || !canSubmit}
+          >
             {loading ? "만드는 중…" : "✦ 일정 생성"}
           </button>
         </div>
         {loading && (
           <div className="mt-3">
-            <Spinner label="동선을 짜는 중… (10~20초)" />
+            <Spinner label="동선을 짜는 중… (10~30초)" />
           </div>
         )}
       </div>

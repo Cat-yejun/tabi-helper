@@ -1,17 +1,19 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase, uploadPhoto } from "@/lib/supabase";
 import { fileToResizedDataUrl, dataUrlToFile } from "@/lib/image";
-import { CATEGORIES, type Expense, type ExpenseItem } from "@/lib/types";
-import { Header, Spinner, CategoryChip } from "@/components/ui";
+import { CATEGORIES, EXPENSE_SORTS, type Expense, type ExpenseItem, type ExpenseSortKey } from "@/lib/types";
+import { Header, Spinner, CategoryChip, Lightbox } from "@/components/ui";
+import InAppCamera from "@/components/InAppCamera";
 
 type Draft = Omit<Expense, "id" | "created_at"> & { id?: string };
 
 const emptyDraft = (): Draft => ({
   store: "",
   purchase_date: new Date().toISOString().slice(0, 10),
+  purchase_time: new Date().toTimeString().slice(0, 5),
   total: 0,
   currency: "JPY",
   category: "식비",
@@ -24,17 +26,16 @@ function ExpensesInner() {
   const params = useSearchParams();
   const [list, setList] = useState<Expense[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [pendingImage, setPendingImage] = useState<string | null>(null); // data URL 대기
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [showCam, setShowCam] = useState(false);
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<ExpenseSortKey>("date_desc");
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function load() {
-    const { data } = await supabase
-      .from("expenses")
-      .select("*")
-      .order("purchase_date", { ascending: false })
-      .order("created_at", { ascending: false });
+    const { data } = await supabase.from("expenses").select("*");
     if (data) setList(data as Expense[]);
   }
   useEffect(() => {
@@ -42,14 +43,28 @@ function ExpensesInner() {
     if (params.get("new") === "1") fileRef.current?.click();
   }, []); // eslint-disable-line
 
-  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
+  const sorted = useMemo(() => {
+    const arr = [...list];
+    switch (sortKey) {
+      case "date_asc":
+        arr.sort((a, b) => `${a.purchase_date}${a.purchase_time || ""}`.localeCompare(`${b.purchase_date}${b.purchase_time || ""}`));
+        break;
+      case "category":
+        arr.sort((a, b) => (a.category || "").localeCompare(b.category || "") || (b.purchase_date || "").localeCompare(a.purchase_date || ""));
+        break;
+      case "amount_desc":
+        arr.sort((a, b) => (b.total || 0) - (a.total || 0));
+        break;
+      default: // date_desc
+        arr.sort((a, b) => `${b.purchase_date}${b.purchase_time || ""}`.localeCompare(`${a.purchase_date}${a.purchase_time || ""}`));
+    }
+    return arr;
+  }, [list, sortKey]);
+
+  async function analyzeAndOpen(dataUrl: string) {
     setAnalyzing(true);
+    setPendingImage(dataUrl);
     try {
-      const dataUrl = await fileToResizedDataUrl(file);
-      setPendingImage(dataUrl);
       const res = await fetch("/api/receipt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -76,6 +91,13 @@ function ExpensesInner() {
     }
   }
 
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    analyzeAndOpen(await fileToResizedDataUrl(file));
+  }
+
   function editExisting(e: Expense) {
     setPendingImage(null);
     setDraft({ ...e, items: e.items || [] });
@@ -92,6 +114,7 @@ function ExpensesInner() {
       const payload = {
         store: draft.store,
         purchase_date: draft.purchase_date,
+        purchase_time: draft.purchase_time,
         total: draft.total,
         currency: draft.currency,
         category: draft.category,
@@ -129,22 +152,32 @@ function ExpensesInner() {
         subtitle={`총 ¥${Math.round(total).toLocaleString()} · ${list.length}건`}
         right={
           <button className="btn-accent text-sm" onClick={() => fileRef.current?.click()}>
-            📷 영수증
+            🖼 앨범
           </button>
         }
       />
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={onPick}
-      />
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPick} />
+      {showCam && (
+        <InAppCamera onClose={() => setShowCam(false)} onCapture={(d) => { setShowCam(false); analyzeAndOpen(d); }} />
+      )}
+      {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
 
       <div className="space-y-3 p-4">
-        <button className="btn-ghost w-full text-sm" onClick={() => setDraft(emptyDraft())}>
-          + 직접 입력
-        </button>
+        <div className="flex gap-2">
+          <button className="btn-accent flex-1 text-sm" onClick={() => setShowCam(true)}>🔇 무음 촬영</button>
+          <button className="btn-ghost flex-1 text-sm" onClick={() => setDraft(emptyDraft())}>+ 직접 입력</button>
+        </div>
+
+        {list.length > 0 && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted">정렬</span>
+            <select className="field py-1.5" value={sortKey} onChange={(e) => setSortKey(e.target.value as ExpenseSortKey)}>
+              {EXPENSE_SORTS.map((s) => (
+                <option key={s.key} value={s.key}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {analyzing && (
           <div className="card p-4">
@@ -158,19 +191,31 @@ function ExpensesInner() {
           </div>
         )}
 
-        {list.map((e) => (
+        {sorted.map((e) => (
           <div key={e.id} className="card p-4">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <CategoryChip value={e.category} />
-                  <p className="truncate font-medium text-ink">{e.store || "이름 없음"}</p>
+            <div className="flex items-start gap-3">
+              {e.image_url && (
+                <button onClick={() => setLightbox(e.image_url!)} className="shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={e.image_url} alt="" className="h-14 w-14 rounded-lg object-cover" />
+                </button>
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <CategoryChip value={e.category} />
+                      <p className="truncate font-medium text-ink">{e.store || "이름 없음"}</p>
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted">
+                      {e.purchase_date}{e.purchase_time ? ` · ${e.purchase_time}` : ""}
+                    </p>
+                  </div>
+                  <p className="shrink-0 font-round text-lg font-bold text-ink">
+                    ¥{Math.round(e.total || 0).toLocaleString()}
+                  </p>
                 </div>
-                <p className="mt-0.5 text-xs text-muted">{e.purchase_date}</p>
               </div>
-              <p className="shrink-0 font-round text-lg font-bold text-ink">
-                ¥{Math.round(e.total || 0).toLocaleString()}
-              </p>
             </div>
             {e.items?.length > 0 && (
               <ul className="mt-2 space-y-0.5 text-sm text-muted">
@@ -184,12 +229,8 @@ function ExpensesInner() {
               </ul>
             )}
             <div className="mt-3 flex gap-2">
-              <button className="btn-ghost flex-1 text-sm" onClick={() => editExisting(e)}>
-                수정
-              </button>
-              <button className="btn-ghost text-sm text-torii" onClick={() => remove(e.id)}>
-                삭제
-              </button>
+              <button className="btn-ghost flex-1 text-sm" onClick={() => editExisting(e)}>수정</button>
+              <button className="btn-ghost text-sm text-torii" onClick={() => remove(e.id)}>삭제</button>
             </div>
           </div>
         ))}
@@ -200,10 +241,7 @@ function ExpensesInner() {
           draft={draft}
           setDraft={setDraft}
           pendingImage={pendingImage}
-          onClose={() => {
-            setDraft(null);
-            setPendingImage(null);
-          }}
+          onClose={() => { setDraft(null); setPendingImage(null); }}
           onSave={save}
           saving={loading}
         />
@@ -213,12 +251,7 @@ function ExpensesInner() {
 }
 
 function EditSheet({
-  draft,
-  setDraft,
-  pendingImage,
-  onClose,
-  onSave,
-  saving,
+  draft, setDraft, pendingImage, onClose, onSave, saving,
 }: {
   draft: Draft;
   setDraft: (d: Draft) => void;
@@ -239,17 +272,11 @@ function EditSheet({
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40">
       <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-paper p-4">
         <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-line" />
-        <h2 className="mb-3 font-round text-lg font-bold">
-          {draft.id ? "기록 수정" : "새 기록"}
-        </h2>
+        <h2 className="mb-3 font-round text-lg font-bold">{draft.id ? "기록 수정" : "새 기록"}</h2>
 
         {(pendingImage || draft.image_url) && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={pendingImage || draft.image_url!}
-            alt="영수증"
-            className="mb-3 max-h-44 w-full rounded-xl object-cover"
-          />
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img src={pendingImage || draft.image_url!} alt="영수증" className="mb-3 max-h-44 w-full rounded-xl object-cover" />
         )}
 
         <div className="space-y-3">
@@ -258,44 +285,40 @@ function EditSheet({
             <input className="field mt-1" value={draft.store || ""} onChange={(e) => up({ store: e.target.value })} />
           </label>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block text-sm">
+          <div className="grid grid-cols-3 gap-3">
+            <label className="col-span-2 block text-sm">
               <span className="text-muted">날짜</span>
               <input type="date" className="field mt-1" value={draft.purchase_date || ""} onChange={(e) => up({ purchase_date: e.target.value })} />
             </label>
             <label className="block text-sm">
-              <span className="text-muted">분류</span>
-              <select className="field mt-1" value={draft.category || ""} onChange={(e) => up({ category: e.target.value })}>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
+              <span className="text-muted">시간</span>
+              <input type="time" className="field mt-1" value={draft.purchase_time || ""} onChange={(e) => up({ purchase_time: e.target.value })} />
             </label>
           </div>
+
+          <label className="block text-sm">
+            <span className="text-muted">분류</span>
+            <select className="field mt-1" value={draft.category || ""} onChange={(e) => up({ category: e.target.value })}>
+              {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
+            </select>
+          </label>
 
           <div>
             <div className="mb-1 flex items-center justify-between text-sm">
               <span className="text-muted">품목</span>
-              <button className="text-transit" onClick={() => up({ items: [...draft.items, { name: "", price: 0, qty: 1 }] })}>
-                + 추가
-              </button>
+              <button className="text-transit" onClick={() => up({ items: [...draft.items, { name: "", price: 0, qty: 1 }] })}>+ 추가</button>
             </div>
             <div className="space-y-2">
               {draft.items.map((it, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <input className="field flex-1" placeholder="품목" value={it.name} onChange={(e) => upItem(i, { name: e.target.value })} />
                   <input className="field w-24" type="number" placeholder="가격" value={it.price} onChange={(e) => upItem(i, { price: Number(e.target.value) })} />
-                  <button className="px-1 text-torii" onClick={() => up({ items: draft.items.filter((_, j) => j !== i) })}>
-                    ✕
-                  </button>
+                  <button className="px-1 text-torii" onClick={() => up({ items: draft.items.filter((_, j) => j !== i) })}>✕</button>
                 </div>
               ))}
             </div>
             {draft.items.length > 0 && (
-              <button
-                className="mt-1 text-xs text-transit"
-                onClick={() => up({ total: itemsTotal })}
-              >
+              <button className="mt-1 text-xs text-transit" onClick={() => up({ total: itemsTotal })}>
                 품목 합계(¥{itemsTotal.toLocaleString()})로 합계 채우기
               </button>
             )}
@@ -319,12 +342,8 @@ function EditSheet({
         </div>
 
         <div className="sticky bottom-0 mt-4 flex gap-2 bg-paper pt-2">
-          <button className="btn-ghost flex-1" onClick={onClose} disabled={saving}>
-            취소
-          </button>
-          <button className="btn-primary flex-1" onClick={onSave} disabled={saving}>
-            {saving ? "저장 중…" : "저장"}
-          </button>
+          <button className="btn-ghost flex-1" onClick={onClose} disabled={saving}>취소</button>
+          <button className="btn-primary flex-1" onClick={onSave} disabled={saving}>{saving ? "저장 중…" : "저장"}</button>
         </div>
       </div>
     </div>

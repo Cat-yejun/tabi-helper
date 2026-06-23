@@ -142,7 +142,16 @@ function MapInner() {
         }))
       );
     } catch (e: any) {
-      setErr(modeVal === "TRANSIT" ? "대중교통 경로를 찾지 못했어요. 도보/자동차로 바꿔보세요." : "경로를 찾지 못했습니다.");
+      const status = e?.code || e?.status || e?.message || "UNKNOWN_ERROR";
+      console.error("Directions error:", status, e);
+      const messages: Record<string, string> = {
+        ZERO_RESULTS: "이 두 지점 사이에 대중교통 노선 정보가 없어요. 도보/자동차로 시도해보세요.",
+        OVER_QUERY_LIMIT: "API 호출 한도를 초과했어요. Google Cloud 콘솔에서 일일 할당량/결제 상태를 확인해주세요.",
+        REQUEST_DENIED: "API 키 설정에 문제가 있어요. 결제 계정 연결, 키의 API 제한사항(Maps JavaScript API 허용 여부)을 확인해주세요.",
+        INVALID_REQUEST: "출발지/도착지 형식을 확인해주세요.",
+        NOT_FOUND: "입력한 장소를 찾을 수 없어요. 더 구체적으로 입력해보세요.",
+      };
+      setErr(messages[status] || `경로를 찾지 못했어요. (${status})`);
       setSteps([]);
       setSummary(null);
     } finally {

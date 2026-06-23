@@ -5,6 +5,7 @@ export type Expense = {
   created_at?: string;
   store: string | null;
   purchase_date: string | null;
+  purchase_time: string | null; // "HH:MM"
   total: number | null;
   currency: string;
   category: string | null;
@@ -49,7 +50,16 @@ export type Translation = {
   translation: string | null;
   explanation: string | null;
   image_url: string | null;
+  source: "photo" | "live" | "voice" | null;
 };
 
 export const CATEGORIES = ["식비", "교통", "쇼핑", "관광", "숙박", "기타"] as const;
 export const PLAN_CATEGORIES = ["관광", "식사", "이동", "숙박", "쇼핑", "기타"] as const;
+
+export const EXPENSE_SORTS = [
+  { key: "date_desc", label: "날짜 최신순" },
+  { key: "date_asc", label: "날짜 오래된순" },
+  { key: "category", label: "종류별" },
+  { key: "amount_desc", label: "금액 높은순" },
+] as const;
+export type ExpenseSortKey = typeof EXPENSE_SORTS[number]["key"];
