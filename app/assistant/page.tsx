@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { ChatMessage } from "@/lib/types";
 import { Header } from "@/components/ui";
+import Markdown from "@/components/Markdown";
 
 const SUGGESTIONS = [
   "삿포로역에서 오타루 가는 법",
@@ -20,12 +21,13 @@ export default function AssistantPage() {
 
   useEffect(() => {
     (async () => {
+      // 최근 100개를 가져온 뒤 시간순(오래된→최신)으로 뒤집어 표시
       const { data } = await supabase
         .from("chat_messages")
         .select("*")
-        .order("created_at", { ascending: true })
-        .limit(50);
-      if (data) setMessages(data as ChatMessage[]);
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (data) setMessages((data as ChatMessage[]).reverse());
     })();
   }, []);
 
@@ -99,13 +101,13 @@ export default function AssistantPage() {
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[82%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
+              className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
                 m.role === "user"
-                  ? "bg-ink text-white"
+                  ? "whitespace-pre-wrap bg-ink text-white"
                   : "border border-line bg-white text-ink"
               }`}
             >
-              {m.content}
+              {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
             </div>
           </div>
         ))}

@@ -51,9 +51,9 @@ function MapInner() {
 
   // 지도 초기화 + 쿼리 파라미터(일정 연계) 처리
   useEffect(() => {
-    const to = params.get("to");           // "lat,lng"
-    const toName = params.get("name");      // 표시용 이름
-    const from = params.get("from");        // "lat,lng" (이전 일정 위치)
+    // 좌표(to/from) 또는 장소이름(toName/fromName) 중 들어온 값을 사용. 이름이 더 정확.
+    const to = params.get("toName") || params.get("to") || "";
+    const from = params.get("fromName") || params.get("from") || "";
     const useMine = params.get("useMyLocation") === "1"; // 현재 위치 출발
 
     if (to) setDestination(to);
