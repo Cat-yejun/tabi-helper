@@ -1,0 +1,71 @@
+@import url("https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&family=Noto+Sans+KR:wght@400;500;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  background: #f1f3f6;
+  color: #14233b;
+  font-family: "Noto Sans KR", "M PLUS Rounded 1c", system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* 노선도 같은 일정 연결선 */
+.route-line::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 22px;
+  bottom: -14px;
+  width: 2px;
+  background: linear-gradient(#0e9da6, #0e9da6);
+  opacity: 0.35;
+}
+.route-last::before {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+.btn {
+  @apply rounded-xl px-4 py-2.5 font-medium transition active:scale-[0.98] disabled:opacity-40;
+}
+.btn-primary {
+  @apply btn bg-ink text-white shadow-soft hover:bg-ink/90;
+}
+.btn-accent {
+  @apply btn bg-torii text-white shadow-soft hover:brightness-105;
+}
+.btn-ghost {
+  @apply btn bg-white text-ink border border-line hover:bg-paper;
+}
+.card {
+  @apply rounded-2xl bg-card shadow-soft border border-line;
+}
+.field {
+  @apply w-full rounded-xl border border-line bg-white px-3 py-2.5 text-ink outline-none focus:border-transit;
+}
+.chip {
+  @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium;
+}

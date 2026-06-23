@@ -1,0 +1,370 @@
+"use client";
+
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { supabase } from "@/lib/supabase";
+import { PLAN_CATEGORIES, type Itinerary, type ItineraryItem } from "@/lib/types";
+import { Header, Spinner, CategoryChip } from "@/components/ui";
+
+function ItineraryInner() {
+  const params = useSearchParams();
+  const [trips, setTrips] = useState<Itinerary[]>([]);
+  const [active, setActive] = useState<Itinerary | null>(null);
+  const [items, setItems] = useState<ItineraryItem[]>([]);
+  const [showAI, setShowAI] = useState(false);
+  const [editing, setEditing] = useState<Partial<ItineraryItem> | null>(null);
+
+  async function loadTrips() {
+    const { data } = await supabase
+      .from("itineraries")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (data) {
+      setTrips(data as Itinerary[]);
+      if (!active && data.length) selectTrip(data[0] as Itinerary);
+    }
+  }
+  async function selectTrip(t: Itinerary) {
+    setActive(t);
+    const { data } = await supabase
+      .from("itinerary_items")
+      .select("*")
+      .eq("itinerary_id", t.id)
+      .order("day_date")
+      .order("sort_order");
+    setItems((data as ItineraryItem[]) || []);
+  }
+  useEffect(() => {
+    loadTrips();
+    if (params.get("new") === "1") setShowAI(true);
+  }, []); // eslint-disable-line
+
+  async function saveItem() {
+    if (!editing || !active) return;
+    const payload = {
+      itinerary_id: active.id,
+      day_date: editing.day_date || active.start_date,
+      time: editing.time || null,
+      place: editing.place || "",
+      address: editing.address || null,
+      lat: editing.lat ?? null,
+      lng: editing.lng ?? null,
+      category: editing.category || "관광",
+      note: editing.note || null,
+      sort_order: editing.sort_order ?? items.length,
+    };
+    if (editing.id) await supabase.from("itinerary_items").update(payload).eq("id", editing.id);
+    else await supabase.from("itinerary_items").insert(payload);
+    setEditing(null);
+    await selectTrip(active);
+  }
+  async function removeItem(id: string) {
+    if (!confirm("이 일정을 삭제할까요?")) return;
+    await supabase.from("itinerary_items").delete().eq("id", id);
+    if (active) await selectTrip(active);
+  }
+  async function removeTrip(t: Itinerary) {
+    if (!confirm(`'${t.title}' 전체 일정을 삭제할까요?`)) return;
+    await supabase.from("itineraries").delete().eq("id", t.id);
+    setActive(null);
+    setItems([]);
+    await loadTrips();
+  }
+
+  // 날짜별 그룹
+  const byDay: Record<string, ItineraryItem[]> = {};
+  for (const it of items) {
+    const k = it.day_date || "미정";
+    (byDay[k] ||= []).push(it);
+  }
+  const days = Object.keys(byDay).sort();
+
+  return (
+    <>
+      <Header
+        title="일정표"
+        subtitle={active?.title}
+        right={
+          <button className="btn-accent text-sm" onClick={() => setShowAI(true)}>
+            ✦ AI 일정
+          </button>
+        }
+      />
+
+      <div className="space-y-4 p-4">
+        {/* 여행 선택 탭 */}
+        {trips.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {trips.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => selectTrip(t)}
+                className={`chip shrink-0 ${
+                  active?.id === t.id ? "bg-ink text-white" : "bg-white text-muted border border-line"
+                }`}
+              >
+                {t.title}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {trips.length === 0 && (
+          <div className="card p-8 text-center text-sm text-muted">
+            “이틀간 삿포로 핵심 관광지랑 라멘 맛집 위주로” 처럼 말하면<br />AI가 동선까지 짜드려요.
+            <button className="btn-accent mt-4 w-full" onClick={() => setShowAI(true)}>
+              ✦ AI로 일정 만들기
+            </button>
+          </div>
+        )}
+
+        {/* 타임라인 */}
+        {days.map((day) => (
+          <section key={day}>
+            <h2 className="mb-2 px-1 font-round font-bold text-ink">
+              {day}{" "}
+              <span className="text-xs font-normal text-muted">{byDay[day].length}곳</span>
+            </h2>
+            <div className="card p-4">
+              {byDay[day].map((it, idx) => (
+                <div
+                  key={it.id}
+                  className={`route-line relative flex gap-3 pb-4 ${
+                    idx === byDay[day].length - 1 ? "route-last pb-0" : ""
+                  }`}
+                >
+                  <span className="z-10 mt-0.5 h-6 w-6 shrink-0 rounded-full bg-transit text-center text-xs font-bold leading-6 text-white">
+                    {idx + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      {it.time && <span className="text-sm font-medium text-transit">{it.time}</span>}
+                      <CategoryChip value={it.category} />
+                    </div>
+                    <p className="font-medium text-ink">{it.place}</p>
+                    {it.address && <p className="text-xs text-muted">{it.address}</p>}
+                    {it.note && <p className="mt-0.5 text-sm text-muted">{it.note}</p>}
+                    <div className="mt-1.5 flex gap-3 text-xs">
+                      <button className="text-transit" onClick={() => setEditing(it)}>
+                        수정
+                      </button>
+                      {it.lat && it.lng && (
+                        <Link
+                          className="text-transit"
+                          href={`/map?to=${it.lat},${it.lng}&name=${encodeURIComponent(it.place)}`}
+                        >
+                          길찾기
+                        </Link>
+                      )}
+                      <button className="text-torii" onClick={() => removeItem(it.id)}>
+                        삭제
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+
+        {active && (
+          <div className="flex gap-2">
+            <button
+              className="btn-ghost flex-1 text-sm"
+              onClick={() => setEditing({ day_date: active.start_date, category: "관광" })}
+            >
+              + 일정 추가
+            </button>
+            <button className="btn-ghost text-sm text-torii" onClick={() => removeTrip(active)}>
+              여행 삭제
+            </button>
+          </div>
+        )}
+      </div>
+
+      {showAI && (
+        <AISheet
+          onClose={() => setShowAI(false)}
+          onDone={async (tripId) => {
+            setShowAI(false);
+            await loadTrips();
+            const { data } = await supabase.from("itineraries").select("*").eq("id", tripId).single();
+            if (data) selectTrip(data as Itinerary);
+          }}
+        />
+      )}
+
+      {editing && (
+        <ItemSheet
+          item={editing}
+          days={active ? [active.start_date, active.end_date].filter(Boolean) as string[] : []}
+          onChange={setEditing}
+          onClose={() => setEditing(null)}
+          onSave={saveItem}
+        />
+      )}
+    </>
+  );
+}
+
+function AISheet({ onClose, onDone }: { onClose: () => void; onDone: (id: string) => void }) {
+  const [prompt, setPrompt] = useState("");
+  const [city, setCity] = useState("삿포로");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function generate() {
+    if (!prompt.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/itinerary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, city, startDate: start, endDate: end }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      const plan = json.data;
+
+      const { data: trip, error } = await supabase
+        .from("itineraries")
+        .insert({
+          title: plan.title || `${city} 여행`,
+          start_date: plan.start_date || start || null,
+          end_date: plan.end_date || end || null,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      const rows: any[] = [];
+      (plan.days || []).forEach((d: any) => {
+        (d.items || []).forEach((it: any, i: number) => {
+          rows.push({
+            itinerary_id: trip.id,
+            day_date: d.date || null,
+            time: it.time || null,
+            place: it.place || "",
+            address: it.address || null,
+            lat: typeof it.lat === "number" ? it.lat : null,
+            lng: typeof it.lng === "number" ? it.lng : null,
+            category: it.category || "관광",
+            note: it.note || null,
+            sort_order: i,
+          });
+        });
+      });
+      if (rows.length) await supabase.from("itinerary_items").insert(rows);
+      onDone(trip.id);
+    } catch (err: any) {
+      alert("생성 실패: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/40">
+      <div className="w-full max-w-md rounded-t-3xl bg-paper p-4">
+        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-line" />
+        <h2 className="mb-1 font-round text-lg font-bold">AI 일정 만들기</h2>
+        <p className="mb-3 text-sm text-muted">가고 싶은 곳·분위기·기간을 자유롭게 적어보세요.</p>
+        <textarea
+          className="field"
+          rows={4}
+          placeholder="예) 첫날은 오타루 운하랑 오르골당, 둘째날은 삿포로 시내 맥주박물관이랑 라멘요코초. 너무 빡빡하지 않게."
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+        />
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <input className="field" placeholder="도시" value={city} onChange={(e) => setCity(e.target.value)} />
+          <input type="date" className="field" value={start} onChange={(e) => setStart(e.target.value)} />
+          <input type="date" className="field" value={end} onChange={(e) => setEnd(e.target.value)} />
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button className="btn-ghost flex-1" onClick={onClose} disabled={loading}>
+            취소
+          </button>
+          <button className="btn-accent flex-1" onClick={generate} disabled={loading || !prompt.trim()}>
+            {loading ? "만드는 중…" : "✦ 일정 생성"}
+          </button>
+        </div>
+        {loading && (
+          <div className="mt-3">
+            <Spinner label="동선을 짜는 중… (10~20초)" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ItemSheet({
+  item,
+  days,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  item: Partial<ItineraryItem>;
+  days: string[];
+  onChange: (i: Partial<ItineraryItem>) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  const up = (p: Partial<ItineraryItem>) => onChange({ ...item, ...p });
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/40">
+      <div className="w-full max-w-md rounded-t-3xl bg-paper p-4">
+        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-line" />
+        <h2 className="mb-3 font-round text-lg font-bold">{item.id ? "일정 수정" : "일정 추가"}</h2>
+        <div className="space-y-3">
+          <label className="block text-sm">
+            <span className="text-muted">장소</span>
+            <input className="field mt-1" value={item.place || ""} onChange={(e) => up({ place: e.target.value })} />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-sm">
+              <span className="text-muted">날짜</span>
+              <input type="date" className="field mt-1" value={item.day_date || ""} onChange={(e) => up({ day_date: e.target.value })} />
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted">시간</span>
+              <input className="field mt-1" placeholder="10:30" value={item.time || ""} onChange={(e) => up({ time: e.target.value })} />
+            </label>
+          </div>
+          <label className="block text-sm">
+            <span className="text-muted">분류</span>
+            <select className="field mt-1" value={item.category || "관광"} onChange={(e) => up({ category: e.target.value })}>
+              {PLAN_CATEGORIES.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            <span className="text-muted">주소</span>
+            <input className="field mt-1" value={item.address || ""} onChange={(e) => up({ address: e.target.value })} />
+          </label>
+          <label className="block text-sm">
+            <span className="text-muted">메모</span>
+            <textarea className="field mt-1" rows={2} value={item.note || ""} onChange={(e) => up({ note: e.target.value })} />
+          </label>
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button className="btn-ghost flex-1" onClick={onClose}>취소</button>
+          <button className="btn-primary flex-1" onClick={onSave} disabled={!item.place}>저장</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function ItineraryPage() {
+  return (
+    <Suspense fallback={<Header title="일정표" />}>
+      <ItineraryInner />
+    </Suspense>
+  );
+}
