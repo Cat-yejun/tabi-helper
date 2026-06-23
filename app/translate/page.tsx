@@ -23,12 +23,23 @@ async function inpaintImage(imageSrc: string): Promise<{ dataUrl: string; count:
   if (!res.ok) throw new Error(json.error);
   const boxes = json.data as Box[];
 
+  // http URL 이면 fetch→blob→dataURL 로 바꿔서 캔버스 오염(CORS) 방지
+  let drawSrc = imageSrc;
+  if (!imageSrc.startsWith("data:")) {
+    const blob = await (await fetch(imageSrc)).blob();
+    drawSrc = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.onerror = () => reject(new Error("이미지 변환 실패"));
+      r.readAsDataURL(blob);
+    });
+  }
+
   const img = new Image();
-  img.crossOrigin = "anonymous"; // Supabase 공개 URL을 캔버스로 읽기 위해
   await new Promise<void>((resolve, reject) => {
     img.onload = () => resolve();
     img.onerror = () => reject(new Error("이미지 로드 실패"));
-    img.src = imageSrc;
+    img.src = drawSrc;
   });
   const c = document.createElement("canvas");
   c.width = img.naturalWidth;

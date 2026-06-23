@@ -175,7 +175,7 @@ function MapInner() {
         NOT_FOUND: "입력한 장소를 찾을 수 없어요. 더 구체적으로 입력해보세요.",
         UNKNOWN_ERROR: "일시적 오류예요. 잠시 후 다시 시도해주세요.",
       };
-      setErr(messages[status] || `경로를 찾지 못했어요. (${status})`);
+      setErr((messages[status] || "경로를 찾지 못했어요.") + ` [${status}]`);
       setSteps([]);
       setSummary(null);
     } finally {

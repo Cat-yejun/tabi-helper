@@ -11,7 +11,19 @@ export async function POST(req: NextRequest) {
   try {
     const { image } = await req.json();
     if (!image) return NextResponse.json({ error: "image 가 필요합니다" }, { status: 400 });
-    const { mediaType, data } = parseDataUrl(image);
+
+    // data URL 이면 그대로, http(s) URL 이면 서버에서 받아 base64 로 변환
+    let mediaType: string;
+    let data: string;
+    if (image.startsWith("data:")) {
+      ({ mediaType, data } = parseDataUrl(image));
+    } else {
+      const r = await fetch(image);
+      if (!r.ok) throw new Error("이미지를 불러오지 못했습니다");
+      mediaType = r.headers.get("content-type") || "image/jpeg";
+      const buf = Buffer.from(await r.arrayBuffer());
+      data = buf.toString("base64");
+    }
 
     const res = await anthropic.messages.create({
       model: MODEL,
