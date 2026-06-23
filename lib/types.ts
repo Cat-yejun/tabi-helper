@@ -39,8 +39,16 @@ export type ItineraryItem = {
 export type ChatMessage = {
   id?: string;
   created_at?: string;
+  conversation_id?: string;
   role: "user" | "assistant";
   content: string;
+};
+
+export type Conversation = {
+  id: string;
+  created_at?: string;
+  updated_at?: string;
+  title: string;
 };
 
 export type Translation = {
@@ -50,6 +58,7 @@ export type Translation = {
   translation: string | null;
   explanation: string | null;
   image_url: string | null;
+  replaced_url: string | null;
   source: "photo" | "live" | "voice" | null;
 };
 

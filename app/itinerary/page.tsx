@@ -13,6 +13,19 @@ const vehicleKo: Record<string, string> = {
   TRAM: "트램", RAIL: "철도", HIGH_SPEED_TRAIN: "신칸센",
 };
 
+// "삿포로역 → 오타루역 (JR 이동)" 같은 이동 항목 정제: 화살표 뒤(도착)만, 괄호 설명 제거
+function cleanPlaceName(name: string): string {
+  let s = name;
+  if (s.includes("→")) s = s.split("→").pop() || s;
+  if (s.includes("->")) s = s.split("->").pop() || s;
+  s = s.replace(/\([^)]*\)/g, "");
+  return s.trim();
+}
+function placeQuery(x: ItineraryItem): string {
+  const name = cleanPlaceName(x.place);
+  return x.address ? `${name} ${x.address}` : name;
+}
+
 // 두 일정 사이의 대중교통 이동을 요약해서 보여주는 커넥터 (탭하면 로드)
 function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem }) {
   const [open, setOpen] = useState(false);
@@ -23,8 +36,8 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
   } | null>(null);
 
   // 장소 이름(+주소)으로 길찾기 — AI가 추정한 부정확한 좌표 대신 구글 지오코딩에 맡김
-  const fromQ = from.address ? `${from.place} ${from.address}` : from.place;
-  const toQ = to.address ? `${to.place} ${to.address}` : to.place;
+  const fromQ = placeQuery(from);
+  const toQ = placeQuery(to);
 
   async function fetchRoute() {
     if (info || loading) return;
@@ -89,15 +102,15 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
   }
 
   return (
-    <div className="rounded-xl border border-dashed border-line bg-paper/60">
-      <button onClick={toggle} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted">
-        <span className="text-transit">{info?.mode === "도보" ? "🚶" : "🚆"}</span>
-        <span className="flex-1">다음 장소까지 이동</span>
-        {info?.duration && <span className="font-medium text-ink">{info.duration}</span>}
-        <span className="text-line">{open ? "▴" : "▾"}</span>
+    <div className="overflow-hidden rounded-xl border border-transit/40 bg-transit/5">
+      <button onClick={toggle} className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-transit">
+        <span className="text-base">{info?.mode === "도보" ? "🚶" : "🚆"}</span>
+        <span className="flex-1">이동방법 {info ? "" : "보기"}</span>
+        {info?.duration && <span className="rounded-full bg-transit px-2 py-0.5 text-[11px] font-bold text-white">{info.duration}</span>}
+        <span className="text-transit/60">{open ? "▴" : "▾"}</span>
       </button>
       {open && (
-        <div className="px-3 pb-2.5 text-xs">
+        <div className="border-t border-transit/20 px-3 py-2.5 text-xs">
           {loading && <Spinner label="경로 확인 중…" />}
           {err && <p className="text-torii">{err}</p>}
           {info && (
@@ -107,7 +120,7 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
                   <span className="text-muted">{info.mode === "도보" ? "도보 이동" : "환승 없이 도보 구간"}</span>
                 ) : (
                   info.lines.map((l, i) => (
-                    <span key={i} className="chip bg-transit/10 text-transit">
+                    <span key={i} className="chip bg-transit/15 text-transit">
                       {l.vehicle} {l.name}
                     </span>
                   ))
@@ -116,15 +129,15 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
               <p className="text-muted">
                 {info.mode} · 소요 {info.duration}{info.fare ? ` · 요금 ${info.fare}` : ""}
               </p>
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap gap-3 pt-0.5">
                 <Link
-                  className="inline-block font-medium text-transit"
+                  className="font-medium text-transit"
                   href={`/map?fromName=${encodeURIComponent(fromQ)}&toName=${encodeURIComponent(toQ)}`}
                 >
                   상세 경로 보기 →
                 </Link>
                 <a
-                  className="inline-block font-medium text-muted"
+                  className="font-medium text-muted"
                   href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(fromQ)}&destination=${encodeURIComponent(toQ)}&travelmode=transit`}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -263,8 +276,6 @@ function ItineraryInner() {
               {byDay[day].map((it, idx) => {
                 const isLast = idx === byDay[day].length - 1;
                 const next = byDay[day][idx + 1];
-                const q = (x: ItineraryItem) =>
-                  encodeURIComponent(x.address ? `${x.place} ${x.address}` : x.place);
                 return (
                   <div key={it.id}>
                     <div className="relative flex gap-3 pb-1">
@@ -283,7 +294,7 @@ function ItineraryInner() {
                         {it.note && <p className="mt-0.5 text-sm text-muted">{it.note}</p>}
                         <div className="mt-1.5 flex flex-wrap gap-3 text-xs">
                           <button className="text-transit" onClick={() => setEditing(it)}>수정</button>
-                          <Link className="text-transit" href={`/map?toName=${q(it)}&useMyLocation=1`}>
+                          <Link className="text-transit" href={`/map?toName=${encodeURIComponent(placeQuery(it))}&useMyLocation=1`}>
                             📍 현재 위치에서 길찾기
                           </Link>
                           <button className="text-torii" onClick={() => removeItem(it.id)}>삭제</button>

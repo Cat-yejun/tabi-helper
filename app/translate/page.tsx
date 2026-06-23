@@ -105,6 +105,7 @@ export default function TranslatePage() {
                   <div className="min-w-0">
                     <p className="truncate text-sm text-muted">{h.original}</p>
                     <p className="truncate font-medium text-ink">{h.translation}</p>
+                    {h.replaced_url && <span className="text-[10px] text-transit">🇰🇷 덮어쓴 사진 있음</span>}
                   </div>
                 </button>
               ))}
@@ -125,6 +126,10 @@ export default function TranslatePage() {
 /* ---------------- 최근 번역 다시보기 ---------------- */
 function HistoryDetail({ item, onClose }: { item: Translation; onClose: () => void }) {
   const [hideBubble, setHideBubble] = useState(false);
+  const [showReplaced, setShowReplaced] = useState(false);
+  const hasReplaced = !!item.replaced_url;
+  const shownSrc = showReplaced && item.replaced_url ? item.replaced_url : item.image_url;
+
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/40" onClick={onClose}>
       <div className="w-full max-w-md rounded-t-3xl bg-paper p-4" onClick={(e) => e.stopPropagation()}>
@@ -132,14 +137,16 @@ function HistoryDetail({ item, onClose }: { item: Translation; onClose: () => vo
         {item.image_url ? (
           <div className="relative rounded-2xl shadow-soft">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={item.image_url} alt="" className="w-full rounded-2xl" />
-            <button
-              onClick={() => setHideBubble((h) => !h)}
-              className="absolute right-3 top-3 z-20 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white"
-            >
-              {hideBubble ? "👁️ 보이기" : "🙈 가리기"}
-            </button>
-            {!hideBubble && (
+            <img src={shownSrc || item.image_url} alt="" className="w-full rounded-2xl" />
+            {!showReplaced && (
+              <button
+                onClick={() => setHideBubble((h) => !h)}
+                className="absolute right-3 top-3 z-20 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white"
+              >
+                {hideBubble ? "👁️ 보이기" : "🙈 가리기"}
+              </button>
+            )}
+            {!showReplaced && !hideBubble && (
               <div className="absolute inset-x-3 bottom-3 z-10">
                 <Bubble result={{ original: item.original || "", reading: "", translation: item.translation || "", explanation: item.explanation || "" }} />
               </div>
@@ -148,7 +155,13 @@ function HistoryDetail({ item, onClose }: { item: Translation; onClose: () => vo
         ) : (
           <Bubble result={{ original: item.original || "", reading: "", translation: item.translation || "", explanation: item.explanation || "" }} />
         )}
-        <button className="btn-ghost mt-3 w-full" onClick={onClose}>닫기</button>
+
+        {hasReplaced && (
+          <button className="btn-ghost mt-3 w-full text-sm" onClick={() => setShowReplaced((s) => !s)}>
+            {showReplaced ? "원본 + 말풍선 보기" : "🇰🇷 한국어 덮어쓴 사진 보기"}
+          </button>
+        )}
+        <button className="btn-ghost mt-2 w-full" onClick={onClose}>닫기</button>
       </div>
     </div>
   );
@@ -157,6 +170,8 @@ function HistoryDetail({ item, onClose }: { item: Translation; onClose: () => vo
 /* ---------------- 사진 모드 (카메라 또는 앨범) ---------------- */
 function PhotoMode({ onSaved }: { onSaved: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const onSavedRef = useRef(onSaved);
+  onSavedRef.current = onSaved;
   const [showCam, setShowCam] = useState(false);
   const [image, setImage] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
@@ -168,6 +183,7 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
   const [hasReplaced, setHasReplaced] = useState(false); // 변환을 한 번이라도 만들었는지
   const [showReplaced, setShowReplaced] = useState(false); // 지금 변환본을 보여줄지(토글, 재분석 없음)
   const [boxCount, setBoxCount] = useState(0);
+  const [recordId, setRecordId] = useState<string | null>(null); // 저장된 translations 레코드 id
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgElRef = useRef<HTMLImageElement | null>(null);
 
@@ -175,6 +191,7 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
     setResult(null);
     setHasReplaced(false);
     setShowReplaced(false);
+    setRecordId(null);
     setImage(dataUrl);
     setLoading(true);
     try {
@@ -182,10 +199,11 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
       setResult(data);
       try {
         const url = await uploadPhoto(dataUrlToFile(dataUrl, "translate.jpg"), "translations");
-        await supabase.from("translations").insert({
+        const { data: rec } = await supabase.from("translations").insert({
           original: data.original, translation: data.translation,
           explanation: data.explanation, image_url: url, source: "photo",
-        });
+        }).select().single();
+        if (rec) setRecordId((rec as any).id);
         onSaved();
       } catch { /* 저장 실패해도 결과는 표시 */ }
     } catch (err: any) {
@@ -248,6 +266,21 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
       }
       setHasReplaced(true);
       setShowReplaced(true);
+
+      // 변환본을 업로드해서 기록에 저장 (나중에 다시 보기)
+      try {
+        const replacedDataUrl = c.toDataURL("image/jpeg", 0.85);
+        const url = await uploadPhoto(dataUrlToFile(replacedDataUrl, "replaced.jpg"), "translations");
+        if (recordId) {
+          await supabase.from("translations").update({ replaced_url: url }).eq("id", recordId);
+        } else {
+          await supabase.from("translations").insert({
+            original: result?.original || null, translation: result?.translation || null,
+            explanation: result?.explanation || null, image_url: url, replaced_url: url, source: "photo",
+          });
+        }
+        onSavedRef.current?.();
+      } catch { /* 저장 실패해도 화면 표시는 유지 */ }
     } catch (e: any) {
       alert("이미지 변환 실패: " + e.message + "\n(인식이 어려운 사진일 수 있어요)");
     } finally {

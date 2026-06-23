@@ -125,3 +125,34 @@ create policy "photos delete" on storage.objects
 -- ============================================================
 alter table expenses add column if not exists purchase_time text;
 alter table translations add column if not exists source text default 'photo';
+
+-- ============================================================
+--  마이그레이션 2: 비서 대화 세션 + 번역 변환본(덮어쓰기) 저장
+-- ============================================================
+
+-- 대화 세션(여러 개)
+create table if not exists conversations (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  title text default '새 대화'
+);
+
+-- chat_messages 에 conversation_id 연결
+alter table chat_messages add column if not exists conversation_id uuid references conversations(id) on delete cascade;
+create index if not exists idx_chat_conversation on chat_messages(conversation_id);
+
+-- 번역: 덮어쓰기(변환본) 이미지 URL 보관
+alter table translations add column if not exists replaced_url text;
+
+-- conversations RLS
+alter table conversations enable row level security;
+drop policy if exists "own_select" on conversations;
+drop policy if exists "own_insert" on conversations;
+drop policy if exists "own_update" on conversations;
+drop policy if exists "own_delete" on conversations;
+create policy "own_select" on conversations for select using (auth.uid() = user_id);
+create policy "own_insert" on conversations for insert with check (auth.uid() = user_id);
+create policy "own_update" on conversations for update using (auth.uid() = user_id);
+create policy "own_delete" on conversations for delete using (auth.uid() = user_id);

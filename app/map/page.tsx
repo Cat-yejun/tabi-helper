@@ -49,11 +49,24 @@ function MapInner() {
     });
   }
 
+  // 일정 항목 이름 정제: "삿포로역 → 오타루역 (JR 이동)" 처럼 이동을 나타내는 항목 처리
+  // 화살표가 있으면 마지막(도착) 부분만, 괄호 보충설명은 제거
+  function cleanPlace(name: string): string {
+    let s = name;
+    if (s.includes("→")) s = s.split("→").pop() || s; // 도착지만
+    if (s.includes("->")) s = s.split("->").pop() || s;
+    s = s.replace(/\([^)]*\)/g, ""); // 괄호 설명 제거
+    return s.trim();
+  }
+
   // 지도 초기화 + 쿼리 파라미터(일정 연계) 처리
   useEffect(() => {
     // 좌표(to/from) 또는 장소이름(toName/fromName) 중 들어온 값을 사용. 이름이 더 정확.
-    const to = params.get("toName") || params.get("to") || "";
-    const from = params.get("fromName") || params.get("from") || "";
+    const toRaw = params.get("toName") || params.get("to") || "";
+    const fromRaw = params.get("fromName") || params.get("from") || "";
+    // 이름 파라미터는 정제, 좌표는 그대로
+    const to = params.get("toName") ? cleanPlace(toRaw) : toRaw;
+    const from = params.get("fromName") ? cleanPlace(fromRaw) : fromRaw;
     const useMine = params.get("useMyLocation") === "1"; // 현재 위치 출발
 
     if (to) setDestination(to);
@@ -145,12 +158,22 @@ function MapInner() {
     } catch (e: any) {
       const status = e?.code || e?.status || e?.message || "UNKNOWN_ERROR";
       console.error("Directions error:", status, e);
+
+      // 대중교통이 없으면 자동으로 도보 경로를 대신 보여줌
+      if (status === "ZERO_RESULTS" && modeVal === "TRANSIT") {
+        setErr("대중교통 경로가 없어 도보 경로를 표시했어요.");
+        try { await runRoute(originVal, destVal, "WALKING"); } catch { /* noop */ }
+        setLoading(false);
+        return;
+      }
+
       const messages: Record<string, string> = {
-        ZERO_RESULTS: "이 두 지점 사이에 대중교통 노선 정보가 없어요. 도보/자동차로 시도해보세요.",
+        ZERO_RESULTS: "이 두 지점 사이의 경로를 찾지 못했어요.",
         OVER_QUERY_LIMIT: "API 호출 한도를 초과했어요. Google Cloud 콘솔에서 일일 할당량/결제 상태를 확인해주세요.",
-        REQUEST_DENIED: "API 키 설정에 문제가 있어요. 결제 계정 연결, 키의 API 제한사항(Maps JavaScript API 허용 여부)을 확인해주세요.",
+        REQUEST_DENIED: "API 설정 문제예요. Google Cloud에서 ① 'Directions API' 활성화 ② 결제 계정 연결 ③ 키의 API 제한사항을 확인해주세요.",
         INVALID_REQUEST: "출발지/도착지 형식을 확인해주세요.",
         NOT_FOUND: "입력한 장소를 찾을 수 없어요. 더 구체적으로 입력해보세요.",
+        UNKNOWN_ERROR: "일시적 오류예요. 잠시 후 다시 시도해주세요.",
       };
       setErr(messages[status] || `경로를 찾지 못했어요. (${status})`);
       setSteps([]);
