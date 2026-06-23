@@ -34,6 +34,13 @@ function MapInner() {
   const [mode, setMode] = useState<Mode>("TRANSIT");
   const [steps, setSteps] = useState<Step[]>([]);
   const [summary, setSummary] = useState<{ duration?: string; distance?: string; fare?: string } | null>(null);
+  // 대중교통 출발 시각 (기본: 내일 오전 9시). datetime-local 문자열
+  const [departAt, setDepartAt] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0, 0, 0);
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  });
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
@@ -126,9 +133,10 @@ function MapInner() {
         travelMode: g.maps.TravelMode[modeVal],
         region: "jp",
       };
-      // 대중교통은 "지금" 기준 출발 시각을 명시 (없으면 0건 나오는 경우 방지)
+      // 대중교통은 출발 시각을 명시 (사용자가 고른 시각, 기본 내일 오전 9시)
       if (modeVal === "TRANSIT") {
-        req.transitOptions = { departureTime: new Date() };
+        const dt = departAt ? new Date(departAt) : new Date();
+        req.transitOptions = { departureTime: isNaN(dt.getTime()) ? new Date() : dt };
       }
 
       // 콜백 방식으로 status 를 정확히 읽음 (Promise 거부에 의존하지 않음)
@@ -230,6 +238,18 @@ function MapInner() {
             </button>
           ))}
         </div>
+
+        {mode === "TRANSIT" && (
+          <label className="flex items-center gap-2 text-sm">
+            <span className="shrink-0 text-muted">출발 시각</span>
+            <input
+              type="datetime-local"
+              className="field py-1.5"
+              value={departAt}
+              onChange={(e) => setDepartAt(e.target.value)}
+            />
+          </label>
+        )}
 
         <button className="btn-primary w-full" onClick={route} disabled={loading || !ready}>
           {loading ? "경로 찾는 중…" : "길찾기"}
