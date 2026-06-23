@@ -33,7 +33,8 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
         origin: { lat: from.lat!, lng: from.lng! },
         destination: { lat: to.lat!, lng: to.lng! },
         travelMode: g.maps.TravelMode.TRANSIT,
-        transitOptions: { modes: ["SUBWAY", "TRAIN", "BUS", "RAIL"] as any },
+        region: "jp",
+        // 특정 수단으로 제한하지 않음 (트램 등 포함해 구글이 알아서 선택)
       });
       const leg = result.routes[0].legs[0];
       const lines = (leg.steps || [])
@@ -89,12 +90,22 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
               <p className="text-muted">
                 소요 {info.duration}{info.fare ? ` · 요금 ${info.fare}` : ""}
               </p>
-              <Link
-                className="inline-block font-medium text-transit"
-                href={`/map?from=${from.lat},${from.lng}&to=${to.lat},${to.lng}`}
-              >
-                상세 경로 보기 →
-              </Link>
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  className="inline-block font-medium text-transit"
+                  href={`/map?from=${from.lat},${from.lng}&to=${to.lat},${to.lng}`}
+                >
+                  상세 경로 보기 →
+                </Link>
+                <a
+                  className="inline-block font-medium text-muted"
+                  href={`https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lng}&destination=${to.lat},${to.lng}&travelmode=transit`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  🗺️ 구글 지도에서 열기
+                </a>
+              </div>
             </div>
           )}
         </div>

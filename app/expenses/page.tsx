@@ -164,7 +164,7 @@ function ExpensesInner() {
 
       <div className="space-y-3 p-4">
         <div className="flex gap-2">
-          <button className="btn-accent flex-1 text-sm" onClick={() => setShowCam(true)}>🔇 무음 촬영</button>
+          <button className="btn-accent flex-1 text-sm" onClick={() => setShowCam(true)}>📷 사진 촬영</button>
           <button className="btn-ghost flex-1 text-sm" onClick={() => setDraft(emptyDraft())}>+ 직접 입력</button>
         </div>
 

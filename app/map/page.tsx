@@ -110,8 +110,9 @@ function MapInner() {
         origin: originVal.trim() || mapObj.current.getCenter(),
         destination: destVal.trim(),
         travelMode: g.maps.TravelMode[modeVal],
+        region: "jp",
       };
-      if (modeVal === "TRANSIT") req.transitOptions = { modes: ["SUBWAY", "TRAIN", "BUS", "RAIL"] };
+      // 특정 수단으로 제한하지 않고 구글이 최적 대중교통 수단(트램 포함)을 알아서 선택하게 둠
 
       const result = await svc.route(req);
       renderer.current.setDirections(result);
@@ -201,6 +202,17 @@ function MapInner() {
         <button className="btn-primary w-full" onClick={route} disabled={loading || !ready}>
           {loading ? "경로 찾는 중…" : "길찾기"}
         </button>
+
+        {destination.trim() && (
+          <a
+            className="btn-ghost block w-full text-center text-sm"
+            href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin.trim() || "")}&destination=${encodeURIComponent(destination.trim())}&travelmode=${mode.toLowerCase()}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            🗺️ 구글 지도 앱에서 열기
+          </a>
+        )}
 
         {summary && (
           <div className="card flex items-center justify-around p-3 text-center">

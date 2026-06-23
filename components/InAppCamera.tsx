@@ -7,9 +7,11 @@ import { useEffect, useRef, useState } from "react";
 export default function InAppCamera({
   onCapture,
   onClose,
+  maxWidth = 1600,
 }: {
   onCapture: (dataUrl: string) => void;
   onClose: () => void;
+  maxWidth?: number;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -49,7 +51,7 @@ export default function InAppCamera({
     const v = videoRef.current;
     const c = canvasRef.current;
     if (!v || !c || !v.videoWidth) return;
-    const maxW = 1600;
+    const maxW = maxWidth;
     const scale = Math.min(1, maxW / v.videoWidth);
     c.width = Math.round(v.videoWidth * scale);
     c.height = Math.round(v.videoHeight * scale);
@@ -79,7 +81,7 @@ export default function InAppCamera({
           취소
         </button>
         <span className="absolute left-4 top-4 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white">
-          🔇 무음 촬영
+          📷 사진 촬영
         </span>
       </div>
       <div className="flex items-center justify-center bg-black py-6">

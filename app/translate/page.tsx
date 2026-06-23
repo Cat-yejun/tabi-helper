@@ -26,7 +26,7 @@ async function translateDataUrl(dataUrl: string): Promise<Result> {
 function Bubble({ result, compact, hidden }: { result: Result; compact?: boolean; hidden?: boolean }) {
   if (hidden) return null;
   return (
-    <div className="relative rounded-2xl bg-white/95 p-3 shadow-lift backdrop-blur">
+    <div className="relative max-h-[45vh] overflow-y-auto rounded-2xl bg-white/95 p-3 shadow-lift backdrop-blur">
       <span className="absolute -top-2 left-6 h-4 w-4 rotate-45 bg-white/95" />
       {result.original && (
         <p className="font-round text-base font-bold text-ink">
@@ -130,17 +130,17 @@ function HistoryDetail({ item, onClose }: { item: Translation; onClose: () => vo
       <div className="w-full max-w-md rounded-t-3xl bg-paper p-4" onClick={(e) => e.stopPropagation()}>
         <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-line" />
         {item.image_url ? (
-          <div className="relative overflow-hidden rounded-2xl shadow-soft">
+          <div className="relative rounded-2xl shadow-soft">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={item.image_url} alt="" className="w-full" />
+            <img src={item.image_url} alt="" className="w-full rounded-2xl" />
             <button
               onClick={() => setHideBubble((h) => !h)}
-              className="absolute right-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white"
+              className="absolute right-3 top-3 z-20 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white"
             >
               {hideBubble ? "👁️ 보이기" : "🙈 가리기"}
             </button>
             {!hideBubble && (
-              <div className="absolute inset-x-3 bottom-3">
+              <div className="absolute inset-x-3 bottom-3 z-10">
                 <Bubble result={{ original: item.original || "", reading: "", translation: item.translation || "", explanation: item.explanation || "" }} />
               </div>
             )}
@@ -154,7 +154,7 @@ function HistoryDetail({ item, onClose }: { item: Translation; onClose: () => vo
   );
 }
 
-/* ---------------- 사진 모드 (무음 카메라 또는 앨범) ---------------- */
+/* ---------------- 사진 모드 (카메라 또는 앨범) ---------------- */
 function PhotoMode({ onSaved }: { onSaved: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [showCam, setShowCam] = useState(false);
@@ -165,12 +165,15 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
 
   // 인페인팅(이미지 내 텍스트 교체) 상태
   const [inpainting, setInpainting] = useState(false);
-  const [showReplaced, setShowReplaced] = useState(false);
+  const [hasReplaced, setHasReplaced] = useState(false); // 변환을 한 번이라도 만들었는지
+  const [showReplaced, setShowReplaced] = useState(false); // 지금 변환본을 보여줄지(토글, 재분석 없음)
+  const [boxCount, setBoxCount] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgElRef = useRef<HTMLImageElement | null>(null);
 
   async function handleImage(dataUrl: string) {
     setResult(null);
+    setHasReplaced(false);
     setShowReplaced(false);
     setImage(dataUrl);
     setLoading(true);
@@ -196,10 +199,11 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    handleImage(await fileToResizedDataUrl(file));
+    handleImage(await fileToResizedDataUrl(file, 2000)); // 작은 글자 인식을 위해 더 높은 해상도 유지
   }
 
   // 이미지 속 일본어를 한국어로 "덮어 그리기" (파파고 스타일, 베스트에포트)
+  // 결과는 캔버스에 한 번만 그려서 보관 — 이후 토글은 재분석 없이 캔버스를 그대로 보여줌
   async function replaceTextInImage() {
     if (!image) return;
     setInpainting(true);
@@ -212,6 +216,7 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       const boxes = json.data as Box[];
+      setBoxCount(boxes.length);
 
       const img = new Image();
       await new Promise<void>((resolve, reject) => {
@@ -241,6 +246,7 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
         }
         ctx.fillText(b.translation, x + 2, y + h / 2);
       }
+      setHasReplaced(true);
       setShowReplaced(true);
     } catch (e: any) {
       alert("이미지 변환 실패: " + e.message + "\n(인식이 어려운 사진일 수 있어요)");
@@ -253,7 +259,7 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
     <>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPick} />
       {showCam && (
-        <InAppCamera onClose={() => setShowCam(false)} onCapture={(d) => { setShowCam(false); handleImage(d); }} />
+        <InAppCamera maxWidth={2000} onClose={() => setShowCam(false)} onCapture={(d) => { setShowCam(false); handleImage(d); }} />
       )}
 
       {!image && !loading && (
@@ -261,20 +267,20 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
           <p className="mb-4 text-4xl">あ→가</p>
           <p className="mb-4 text-sm">메뉴판 · 표지판 · 안내문을 인식해요</p>
           <div className="flex gap-2">
-            <button className="btn-accent flex-1 text-sm" onClick={() => setShowCam(true)}>🔇 무음 촬영</button>
+            <button className="btn-accent flex-1 text-sm" onClick={() => setShowCam(true)}>📷 사진 촬영</button>
             <button className="btn-ghost flex-1 text-sm" onClick={() => fileRef.current?.click()}>🖼 앨범에서</button>
           </div>
         </div>
       )}
 
       {image && (
-        <div className="relative overflow-hidden rounded-2xl shadow-soft">
+        <div className="relative rounded-2xl shadow-soft">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             ref={imgElRef}
             src={showReplaced ? canvasRef.current?.toDataURL("image/jpeg", 0.9) || image : image}
             alt="원본"
-            className="w-full"
+            className="w-full rounded-2xl"
           />
           <canvas ref={canvasRef} className="hidden" />
           {(loading || inpainting) && (
@@ -287,13 +293,13 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
           {result && !showReplaced && (
             <button
               onClick={() => setHideBubble((h) => !h)}
-              className="absolute right-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white"
+              className="absolute right-3 top-3 z-20 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white"
             >
               {hideBubble ? "👁️" : "🙈"}
             </button>
           )}
           {result && !showReplaced && (
-            <div className="absolute inset-x-3 bottom-3 animate-[fadeIn_.3s_ease]">
+            <div className="absolute inset-x-3 bottom-3 z-10 animate-[fadeIn_.3s_ease]">
               <Bubble result={result} hidden={hideBubble} />
             </div>
           )}
@@ -302,24 +308,34 @@ function PhotoMode({ onSaved }: { onSaved: () => void }) {
 
       {image && !loading && (
         <div className="mt-3 flex gap-2">
-          <button className="btn-ghost flex-1 text-sm" onClick={() => { setImage(null); setResult(null); }}>
+          <button className="btn-ghost flex-1 text-sm" onClick={() => { setImage(null); setResult(null); setHasReplaced(false); }}>
             다시 찍기
           </button>
-          {result && !showReplaced && (
+          {!hasReplaced && result && (
             <button className="btn-primary flex-1 text-sm" onClick={replaceTextInImage} disabled={inpainting}>
               🇰🇷 사진 속 글자 바꾸기
             </button>
           )}
-          {showReplaced && (
-            <button className="btn-ghost flex-1 text-sm" onClick={() => setShowReplaced(false)}>
-              원본 보기
+          {hasReplaced && (
+            <button className="btn-ghost flex-1 text-sm" onClick={() => setShowReplaced((s) => !s)}>
+              {showReplaced ? "원본 보기" : "변환본 다시 보기"}
+            </button>
+          )}
+          {hasReplaced && (
+            <button className="btn-ghost text-sm" onClick={replaceTextInImage} disabled={inpainting}>
+              ↻ 다시 변환
             </button>
           )}
         </div>
       )}
-      {result && !showReplaced && (
+      {result && !hasReplaced && (
         <p className="mt-2 text-center text-xs text-muted">
           ‘사진 속 글자 바꾸기’는 AI가 글자 위치를 추정해 덮어 그리는 기능으로, 정확도가 완벽하지 않을 수 있어요.
+        </p>
+      )}
+      {hasReplaced && (
+        <p className="mt-2 text-center text-xs text-muted">
+          {boxCount}개 텍스트 블록을 바꿨어요. 작은 글자나 흐린 글자는 인식되지 않을 수 있어요(베스트에포트).
         </p>
       )}
     </>
@@ -410,20 +426,20 @@ function LiveCameraMode({ onSaved }: { onSaved: () => void }) {
         <button onClick={() => setSub("auto")} className={`chip flex-1 justify-center py-2 ${sub === "auto" ? "bg-transit text-white" : "bg-white text-muted border border-line"}`}>♻︎ 자동 번역</button>
       </div>
 
-      <div className="relative overflow-hidden rounded-2xl bg-black shadow-soft">
-        <video ref={videoRef} playsInline muted className="w-full" onClick={() => sub === "tap" && capture()} />
+      <div className="relative rounded-2xl bg-black shadow-soft">
+        <video ref={videoRef} playsInline muted className="w-full rounded-2xl" onClick={() => sub === "tap" && capture()} />
         <canvas ref={canvasRef} className="hidden" />
         {!ready && <div className="absolute inset-0 flex items-center justify-center text-white"><Spinner label="카메라 켜는 중…" /></div>}
-        <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white">
+        <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white">
           {busy ? (<><span className="h-2 w-2 animate-pulse rounded-full bg-torii" /> 번역 중</>) : sub === "auto" ? (<><span className="h-2 w-2 rounded-full bg-transit" /> 자동 (3초마다)</>) : (<>화면을 탭하세요</>)}
         </div>
         {result && (
-          <button onClick={() => setHideBubble((h) => !h)} className="absolute right-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white">
+          <button onClick={() => setHideBubble((h) => !h)} className="absolute right-3 top-3 z-20 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white">
             {hideBubble ? "👁️" : "🙈"}
           </button>
         )}
         {result && (
-          <div className="absolute inset-x-3 bottom-3 animate-[fadeIn_.3s_ease]">
+          <div className="absolute inset-x-3 bottom-3 z-10 animate-[fadeIn_.3s_ease]">
             <Bubble result={result} compact hidden={hideBubble} />
           </div>
         )}
