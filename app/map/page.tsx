@@ -119,15 +119,42 @@ function MapInner() {
     try {
       const g = await loadGoogleMaps();
       const svc = new g.maps.DirectionsService();
+      const origin = originVal.trim() || mapObj.current.getCenter();
       const req: any = {
-        origin: originVal.trim() || mapObj.current.getCenter(),
+        origin,
         destination: destVal.trim(),
         travelMode: g.maps.TravelMode[modeVal],
         region: "jp",
       };
-      // 특정 수단으로 제한하지 않고 구글이 최적 대중교통 수단(트램 포함)을 알아서 선택하게 둠
+      // 대중교통은 "지금" 기준 출발 시각을 명시 (없으면 0건 나오는 경우 방지)
+      if (modeVal === "TRANSIT") {
+        req.transitOptions = { departureTime: new Date() };
+      }
 
-      const result = await svc.route(req);
+      // 콜백 방식으로 status 를 정확히 읽음 (Promise 거부에 의존하지 않음)
+      const { result, status } = await new Promise<{ result: any; status: string }>((resolve) => {
+        svc.route(req, (res: any, st: any) => resolve({ result: res, status: String(st) }));
+      });
+
+      if (status !== "OK" || !result?.routes?.length) {
+        // 대중교통이 0건이면 안내만 하고 자동 전환하지 않음(원인 파악 위해)
+        if (status === "ZERO_RESULTS" && modeVal === "TRANSIT") {
+          setErr("이 시간대·구간에 대중교통 경로가 없어요. 도보/자동차 버튼을 눌러보세요. [ZERO_RESULTS]");
+        } else {
+          const messages: Record<string, string> = {
+            ZERO_RESULTS: "이 두 지점 사이의 경로를 찾지 못했어요.",
+            OVER_QUERY_LIMIT: "API 호출 한도를 초과했어요. Google Cloud 콘솔에서 일일 할당량/결제 상태를 확인해주세요.",
+            REQUEST_DENIED: "API 설정 문제예요. 결제 계정 연결과 키의 API 제한사항을 확인해주세요.",
+            INVALID_REQUEST: "출발지/도착지 형식을 확인해주세요. (출발지가 비어있을 수 있어요)",
+            NOT_FOUND: "입력한 장소를 찾을 수 없어요. 더 구체적으로 입력해보세요.",
+          };
+          setErr((messages[status] || "경로를 찾지 못했어요.") + ` [${status}]`);
+        }
+        setSteps([]);
+        setSummary(null);
+        return;
+      }
+
       renderer.current.setDirections(result);
       const leg = result.routes[0].legs[0];
       setSummary({
@@ -156,26 +183,8 @@ function MapInner() {
         }))
       );
     } catch (e: any) {
-      const status = e?.code || e?.status || e?.message || "UNKNOWN_ERROR";
-      console.error("Directions error:", status, e);
-
-      // 대중교통이 없으면 자동으로 도보 경로를 대신 보여줌
-      if (status === "ZERO_RESULTS" && modeVal === "TRANSIT") {
-        setErr("대중교통 경로가 없어 도보 경로를 표시했어요.");
-        try { await runRoute(originVal, destVal, "WALKING"); } catch { /* noop */ }
-        setLoading(false);
-        return;
-      }
-
-      const messages: Record<string, string> = {
-        ZERO_RESULTS: "이 두 지점 사이의 경로를 찾지 못했어요.",
-        OVER_QUERY_LIMIT: "API 호출 한도를 초과했어요. Google Cloud 콘솔에서 일일 할당량/결제 상태를 확인해주세요.",
-        REQUEST_DENIED: "API 설정 문제예요. Google Cloud에서 ① 'Directions API' 활성화 ② 결제 계정 연결 ③ 키의 API 제한사항을 확인해주세요.",
-        INVALID_REQUEST: "출발지/도착지 형식을 확인해주세요.",
-        NOT_FOUND: "입력한 장소를 찾을 수 없어요. 더 구체적으로 입력해보세요.",
-        UNKNOWN_ERROR: "일시적 오류예요. 잠시 후 다시 시도해주세요.",
-      };
-      setErr((messages[status] || "경로를 찾지 못했어요.") + ` [${status}]`);
+      console.error("Directions error:", e);
+      setErr("길찾기 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.");
       setSteps([]);
       setSummary(null);
     } finally {

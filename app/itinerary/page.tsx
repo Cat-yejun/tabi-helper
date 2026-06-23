@@ -49,25 +49,23 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
       const g = await loadGoogleMaps();
       const svc = new g.maps.DirectionsService();
 
-      // 1) 대중교통 시도 → 없으면 2) 도보로 폴백
-      async function tryMode(mode: "TRANSIT" | "WALKING") {
-        return svc.route({
-          origin: fromQ,
-          destination: toQ,
-          travelMode: g.maps.TravelMode[mode],
-          region: "jp",
-        });
+      // 콜백으로 status 를 정확히 읽음
+      function routeOnce(mode: "TRANSIT" | "WALKING"): Promise<{ result: any; status: string }> {
+        const req: any = { origin: fromQ, destination: toQ, travelMode: g.maps.TravelMode[mode], region: "jp" };
+        if (mode === "TRANSIT") req.transitOptions = { departureTime: new Date() };
+        return new Promise((resolve) => svc.route(req, (res: any, st: any) => resolve({ result: res, status: String(st) })));
       }
 
-      let result: any;
+      let { result, status } = await routeOnce("TRANSIT");
       let usedMode: "대중교통" | "도보" = "대중교통";
-      try {
-        result = await tryMode("TRANSIT");
-      } catch (e: any) {
-        if ((e?.code || e?.status) === "ZERO_RESULTS") {
-          result = await tryMode("WALKING");
-          usedMode = "도보";
-        } else throw e;
+      if (status === "ZERO_RESULTS") {
+        ({ result, status } = await routeOnce("WALKING"));
+        usedMode = "도보";
+      }
+      if (status !== "OK" || !result?.routes?.length) {
+        setErr(`경로를 찾지 못했어요 [${status}]`);
+        setLoading(false);
+        return;
       }
 
       const leg = result.routes[0].legs[0];
@@ -84,18 +82,13 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
         lines,
       };
       setInfo(newInfo);
-      // from 항목에 캐시 저장 (다시 들어와도 유지)
-      supabase.from("itinerary_items").update({ transit_cache: newInfo }).eq("id", from.id);
+      // from 항목에 캐시 저장 (다시 들어와도 유지). 실패 시 콘솔에 표시(컬럼 없을 때 등)
+      const { error: cacheErr } = await supabase
+        .from("itinerary_items").update({ transit_cache: newInfo }).eq("id", from.id);
+      if (cacheErr) console.error("이동방법 캐시 저장 실패:", cacheErr.message);
     } catch (e: any) {
-      const status = e?.code || e?.status || "UNKNOWN_ERROR";
-      console.error("Directions error:", status, e);
-      setErr(
-        status === "ZERO_RESULTS"
-          ? "경로를 찾지 못했어요"
-          : status === "REQUEST_DENIED"
-          ? "API 설정 확인 필요 (Directions API 활성화)"
-          : `경로 확인 실패 (${status})`
-      );
+      console.error("Directions error:", e);
+      setErr("경로 확인 중 오류가 발생했어요");
     } finally {
       setLoading(false);
     }
