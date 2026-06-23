@@ -6,6 +6,100 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { PLAN_CATEGORIES, type Itinerary, type ItineraryItem } from "@/lib/types";
 import { Header, Spinner, CategoryChip } from "@/components/ui";
+import { loadGoogleMaps } from "@/lib/gmaps";
+
+const vehicleKo: Record<string, string> = {
+  SUBWAY: "지하철", HEAVY_RAIL: "열차", COMMUTER_TRAIN: "전철", BUS: "버스",
+  TRAM: "트램", RAIL: "철도", HIGH_SPEED_TRAIN: "신칸센",
+};
+
+// 두 일정 사이의 대중교통 이동을 요약해서 보여주는 커넥터 (탭하면 로드)
+function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [info, setInfo] = useState<{
+    duration?: string; fare?: string; lines: { vehicle: string; name: string }[];
+  } | null>(null);
+
+  async function fetchRoute() {
+    if (info || loading) return;
+    setLoading(true);
+    setErr("");
+    try {
+      const g = await loadGoogleMaps();
+      const svc = new g.maps.DirectionsService();
+      const result = await svc.route({
+        origin: { lat: from.lat!, lng: from.lng! },
+        destination: { lat: to.lat!, lng: to.lng! },
+        travelMode: g.maps.TravelMode.TRANSIT,
+        transitOptions: { modes: ["SUBWAY", "TRAIN", "BUS", "RAIL"] as any },
+      });
+      const leg = result.routes[0].legs[0];
+      const lines = (leg.steps || [])
+        .filter((s: any) => s.transit)
+        .map((s: any) => ({
+          vehicle: vehicleKo[s.transit.line?.vehicle?.type || ""] || "대중교통",
+          name: s.transit.line?.short_name || s.transit.line?.name || "",
+        }));
+      setInfo({
+        duration: leg.duration?.text,
+        fare: (result.routes[0] as any).fare?.text,
+        lines,
+      });
+    } catch {
+      setErr("대중교통 경로를 찾지 못했어요");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggle() {
+    setOpen((o) => !o);
+    if (!open) fetchRoute();
+  }
+
+  return (
+    <div className="rounded-xl border border-dashed border-line bg-paper/60">
+      <button onClick={toggle} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted">
+        <span className="text-transit">🚆</span>
+        <span className="flex-1">다음 장소까지 이동</span>
+        {info?.duration && <span className="font-medium text-ink">{info.duration}</span>}
+        <span className="text-line">{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-2.5 text-xs">
+          {loading && <Spinner label="경로 확인 중…" />}
+          {err && <p className="text-torii">{err}</p>}
+          {info && (
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {info.lines.length === 0 ? (
+                  <span className="text-muted">도보 이동 가능 거리</span>
+                ) : (
+                  info.lines.map((l, i) => (
+                    <span key={i} className="chip bg-transit/10 text-transit">
+                      {l.vehicle} {l.name}
+                    </span>
+                  ))
+                )}
+              </div>
+              <p className="text-muted">
+                소요 {info.duration}{info.fare ? ` · 요금 ${info.fare}` : ""}
+              </p>
+              <Link
+                className="inline-block font-medium text-transit"
+                href={`/map?from=${from.lat},${from.lng}&to=${to.lat},${to.lng}`}
+              >
+                상세 경로 보기 →
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ItineraryInner() {
   const params = useSearchParams();
@@ -127,43 +221,48 @@ function ItineraryInner() {
               <span className="text-xs font-normal text-muted">{byDay[day].length}곳</span>
             </h2>
             <div className="card p-4">
-              {byDay[day].map((it, idx) => (
-                <div
-                  key={it.id}
-                  className={`route-line relative flex gap-3 pb-4 ${
-                    idx === byDay[day].length - 1 ? "route-last pb-0" : ""
-                  }`}
-                >
-                  <span className="z-10 mt-0.5 h-6 w-6 shrink-0 rounded-full bg-transit text-center text-xs font-bold leading-6 text-white">
-                    {idx + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      {it.time && <span className="text-sm font-medium text-transit">{it.time}</span>}
-                      <CategoryChip value={it.category} />
+              {byDay[day].map((it, idx) => {
+                const isLast = idx === byDay[day].length - 1;
+                const next = byDay[day][idx + 1];
+                return (
+                  <div key={it.id}>
+                    <div className={`route-line relative flex gap-3 ${isLast ? "route-last" : ""} pb-1`}>
+                      <span className="z-10 mt-0.5 h-6 w-6 shrink-0 rounded-full bg-transit text-center text-xs font-bold leading-6 text-white">
+                        {idx + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          {it.time && <span className="text-sm font-medium text-transit">{it.time}</span>}
+                          <CategoryChip value={it.category} />
+                        </div>
+                        <p className="font-medium text-ink">{it.place}</p>
+                        {it.address && <p className="text-xs text-muted">{it.address}</p>}
+                        {it.note && <p className="mt-0.5 text-sm text-muted">{it.note}</p>}
+                        <div className="mt-1.5 flex flex-wrap gap-3 text-xs">
+                          <button className="text-transit" onClick={() => setEditing(it)}>수정</button>
+                          {it.lat && it.lng && (
+                            <Link className="text-transit" href={`/map?to=${it.lat},${it.lng}&useMyLocation=1`}>
+                              📍 현재 위치에서
+                            </Link>
+                          )}
+                          <button className="text-torii" onClick={() => removeItem(it.id)}>삭제</button>
+                        </div>
+                      </div>
                     </div>
-                    <p className="font-medium text-ink">{it.place}</p>
-                    {it.address && <p className="text-xs text-muted">{it.address}</p>}
-                    {it.note && <p className="mt-0.5 text-sm text-muted">{it.note}</p>}
-                    <div className="mt-1.5 flex gap-3 text-xs">
-                      <button className="text-transit" onClick={() => setEditing(it)}>
-                        수정
-                      </button>
-                      {it.lat && it.lng && (
-                        <Link
-                          className="text-transit"
-                          href={`/map?to=${it.lat},${it.lng}&name=${encodeURIComponent(it.place)}`}
-                        >
-                          길찾기
-                        </Link>
-                      )}
-                      <button className="text-torii" onClick={() => removeItem(it.id)}>
-                        삭제
-                      </button>
-                    </div>
+
+                    {/* 다음 장소까지 이동 요약 */}
+                    {!isLast && (
+                      <div className="ml-9 mb-2">
+                        {it.lat && it.lng && next?.lat && next?.lng ? (
+                          <TransitConnector from={it} to={next} />
+                        ) : (
+                          <p className="py-1 text-xs text-line">↕ 좌표가 없어 이동 안내를 만들 수 없어요</p>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         ))}

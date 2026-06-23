@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Nav from "@/components/Nav";
+import AuthGate from "@/components/AuthGate";
 
 export const metadata: Metadata = {
   title: "Tabi · 일본 여행 도우미",
@@ -18,8 +19,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ko">
       <body>
-        <div className="mx-auto min-h-screen max-w-md pb-20">{children}</div>
-        <Nav />
+        <div className="mx-auto min-h-screen max-w-md">
+          <AuthGate>
+            <div className="pb-20">{children}</div>
+            <Nav />
+          </AuthGate>
+        </div>
       </body>
     </html>
   );

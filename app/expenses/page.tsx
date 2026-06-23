@@ -137,7 +137,6 @@ function ExpensesInner() {
         ref={fileRef}
         type="file"
         accept="image/*"
-        capture="environment"
         className="hidden"
         onChange={onPick}
       />

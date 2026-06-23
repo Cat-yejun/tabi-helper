@@ -1,42 +1,46 @@
 -- ============================================================
---  TABI HELPER - Supabase schema
+--  TABI HELPER - Supabase schema (with Auth + RLS)
 --  Supabase > SQL Editor 에 통째로 붙여넣고 RUN 하세요.
+--  로그인한 사용자는 자기 데이터만 보고 수정할 수 있습니다.
 -- ============================================================
 
 -- 영수증/가계부
 create table if not exists expenses (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   created_at timestamptz default now(),
-  store text,                       -- 가게 이름
-  purchase_date date,               -- 구매 날짜
-  total numeric,                    -- 합계
-  currency text default 'JPY',      -- 통화
-  category text,                    -- 식비/교통/쇼핑/관광/숙박/기타
-  items jsonb default '[]'::jsonb,  -- [{name, price, qty}]
+  store text,
+  purchase_date date,
+  total numeric,
+  currency text default 'JPY',
+  category text,
+  items jsonb default '[]'::jsonb,
   note text,
-  image_url text                    -- Supabase Storage 경로
+  image_url text
 );
 
--- 일정표 (여러 개 가능)
+-- 일정표
 create table if not exists itineraries (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   created_at timestamptz default now(),
   title text not null,
   start_date date,
   end_date date
 );
 
--- 일정 항목 (스톱)
+-- 일정 항목
 create table if not exists itinerary_items (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   itinerary_id uuid references itineraries(id) on delete cascade,
-  day_date date,                    -- 어느 날
-  time text,                        -- "10:30" 같은 표시용 시간
-  place text not null,              -- 장소 이름
+  day_date date,
+  time text,
+  place text not null,
   address text,
   lat double precision,
   lng double precision,
-  category text,                    -- 관광/식사/이동/숙박/쇼핑
+  category text,
   note text,
   sort_order int default 0
 );
@@ -44,40 +48,73 @@ create table if not exists itinerary_items (
 -- 번역 기록
 create table if not exists translations (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   created_at timestamptz default now(),
-  original text,                    -- 원문(일본어 등)
-  translation text,                 -- 한국어 번역
-  explanation text,                 -- 설명
+  original text,
+  translation text,
+  explanation text,
   image_url text
 );
 
 -- 비서 대화 기록
 create table if not exists chat_messages (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   created_at timestamptz default now(),
-  role text not null,               -- 'user' | 'assistant'
+  role text not null,
   content text not null
 );
 
--- 인덱스
 create index if not exists idx_items_itinerary on itinerary_items(itinerary_id);
 create index if not exists idx_expenses_date on expenses(purchase_date);
+create index if not exists idx_expenses_user on expenses(user_id);
+create index if not exists idx_itineraries_user on itineraries(user_id);
 
 -- ------------------------------------------------------------
---  RLS: 개인용 단일 사용자 앱이라 비활성화(누구나 anon 키로 접근).
---  공개 배포한다면 Supabase Auth + 정책을 켜세요. README 참고.
+--  RLS: 본인 데이터만 접근
 -- ------------------------------------------------------------
-alter table expenses        disable row level security;
-alter table itineraries     disable row level security;
-alter table itinerary_items disable row level security;
-alter table translations    disable row level security;
-alter table chat_messages   disable row level security;
+alter table expenses        enable row level security;
+alter table itineraries     enable row level security;
+alter table itinerary_items enable row level security;
+alter table translations    enable row level security;
+alter table chat_messages   enable row level security;
 
--- 영수증/번역 이미지 저장용 Storage 버킷
+-- 각 테이블 공통 정책 (본인 행만 select/insert/update/delete)
+do $$
+declare t text;
+begin
+  foreach t in array array['expenses','itineraries','itinerary_items','translations','chat_messages']
+  loop
+    execute format('drop policy if exists "own_select" on %I;', t);
+    execute format('drop policy if exists "own_insert" on %I;', t);
+    execute format('drop policy if exists "own_update" on %I;', t);
+    execute format('drop policy if exists "own_delete" on %I;', t);
+    execute format('create policy "own_select" on %I for select using (auth.uid() = user_id);', t);
+    execute format('create policy "own_insert" on %I for insert with check (auth.uid() = user_id);', t);
+    execute format('create policy "own_update" on %I for update using (auth.uid() = user_id);', t);
+    execute format('create policy "own_delete" on %I for delete using (auth.uid() = user_id);', t);
+  end loop;
+end $$;
+
+-- ------------------------------------------------------------
+--  Storage: 사진 버킷 (사용자별 폴더로 분리)
+-- ------------------------------------------------------------
 insert into storage.buckets (id, name, public)
 values ('photos', 'photos', true)
 on conflict (id) do nothing;
 
--- 버킷에 누구나 업로드/읽기 (개인용 가정)
-create policy "photos public read"  on storage.objects for select using (bucket_id = 'photos');
-create policy "photos public write" on storage.objects for insert with check (bucket_id = 'photos');
+drop policy if exists "photos read"   on storage.objects;
+drop policy if exists "photos write"  on storage.objects;
+drop policy if exists "photos delete" on storage.objects;
+
+-- 읽기는 공개(공개 URL 사용), 쓰기/삭제는 본인 폴더(uid/...)만
+create policy "photos read" on storage.objects
+  for select using (bucket_id = 'photos');
+create policy "photos write" on storage.objects
+  for insert with check (
+    bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text
+  );
+create policy "photos delete" on storage.objects
+  for delete using (
+    bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text
+  );

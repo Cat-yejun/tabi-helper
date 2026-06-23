@@ -37,14 +37,30 @@ function MapInner() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // 지도 초기화 + 쿼리 파라미터로 도착지 받기
+  // 현재 위치를 Promise 로 가져오기
+  function getCurrentPos(): Promise<string> {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) return reject(new Error("위치 사용 불가"));
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve(`${pos.coords.latitude},${pos.coords.longitude}`),
+        () => reject(new Error("현재 위치를 가져오지 못했습니다")),
+        { enableHighAccuracy: true }
+      );
+    });
+  }
+
+  // 지도 초기화 + 쿼리 파라미터(일정 연계) 처리
   useEffect(() => {
-    const to = params.get("to");
-    const name = params.get("name");
-    if (to) setDestination(name ? `${name}` : to);
+    const to = params.get("to");           // "lat,lng"
+    const toName = params.get("name");      // 표시용 이름
+    const from = params.get("from");        // "lat,lng" (이전 일정 위치)
+    const useMine = params.get("useMyLocation") === "1"; // 현재 위치 출발
+
+    if (to) setDestination(to);
+    if (from) setOrigin(from);
 
     loadGoogleMaps()
-      .then((g) => {
+      .then(async (g) => {
         mapObj.current = new g.maps.Map(mapRef.current!, {
           center: { lat: 43.0618, lng: 141.3545 }, // 삿포로역
           zoom: 12,
@@ -53,33 +69,49 @@ function MapInner() {
         });
         renderer.current = new g.maps.DirectionsRenderer({ map: mapObj.current });
         setReady(true);
+
+        // 일정에서 넘어온 경우 자동으로 길찾기 실행
+        if (to) {
+          let originVal = from || "";
+          if (useMine && !from) {
+            try {
+              originVal = await getCurrentPos();
+              setOrigin(originVal);
+            } catch { /* 실패 시 사용자가 직접 입력 */ }
+          }
+          runRoute(originVal, to, "TRANSIT");
+        }
       })
       .catch((e) => setErr(e.message));
   }, []); // eslint-disable-line
 
-  function useMyLocation() {
-    if (!navigator.geolocation) return setErr("위치 권한을 사용할 수 없습니다");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setOrigin(`${pos.coords.latitude},${pos.coords.longitude}`),
-      () => setErr("현재 위치를 가져오지 못했습니다"),
-      { enableHighAccuracy: true }
-    );
+  async function useMyLocation() {
+    try {
+      setOrigin(await getCurrentPos());
+    } catch (e: any) {
+      setErr(e.message);
+    }
   }
 
-  async function route() {
+  function route() {
+    runRoute(origin, destination, mode);
+  }
+
+  // 실제 경로 계산 (명시적 값을 받아 자동/수동 모두 처리)
+  async function runRoute(originVal: string, destVal: string, modeVal: Mode) {
     setErr("");
-    if (!destination.trim()) return setErr("도착지를 입력하세요");
+    if (!destVal.trim()) return setErr("도착지를 입력하세요");
+    setMode(modeVal);
     setLoading(true);
     try {
       const g = await loadGoogleMaps();
       const svc = new g.maps.DirectionsService();
-      const orig = origin.trim() || "현재 위치 미지정";
       const req: any = {
-        origin: origin.trim() || mapObj.current.getCenter(),
-        destination: destination.trim(),
-        travelMode: g.maps.TravelMode[mode],
+        origin: originVal.trim() || mapObj.current.getCenter(),
+        destination: destVal.trim(),
+        travelMode: g.maps.TravelMode[modeVal],
       };
-      if (mode === "TRANSIT") req.transitOptions = { modes: ["SUBWAY", "TRAIN", "BUS", "RAIL"] };
+      if (modeVal === "TRANSIT") req.transitOptions = { modes: ["SUBWAY", "TRAIN", "BUS", "RAIL"] };
 
       const result = await svc.route(req);
       renderer.current.setDirections(result);
@@ -110,7 +142,7 @@ function MapInner() {
         }))
       );
     } catch (e: any) {
-      setErr(mode === "TRANSIT" ? "대중교통 경로를 찾지 못했어요. 도보/자동차로 바꿔보세요." : "경로를 찾지 못했습니다.");
+      setErr(modeVal === "TRANSIT" ? "대중교통 경로를 찾지 못했어요. 도보/자동차로 바꿔보세요." : "경로를 찾지 못했습니다.");
       setSteps([]);
       setSummary(null);
     } finally {
@@ -144,7 +176,10 @@ function MapInner() {
           {(["TRANSIT", "WALKING", "DRIVING"] as Mode[]).map((m) => (
             <button
               key={m}
-              onClick={() => setMode(m)}
+              onClick={() => {
+                setMode(m);
+                if (destination.trim()) runRoute(origin, destination, m);
+              }}
               className={`chip flex-1 justify-center py-2 ${
                 mode === m ? "bg-transit text-white" : "bg-white text-muted border border-line"
               }`}
