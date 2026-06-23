@@ -12,6 +12,46 @@ type TopMode = "photo" | "live" | "voice";
 type LiveSub = "auto" | "tap";
 type Box = { x: number; y: number; w: number; h: number; translation: string };
 
+// 이미지(data URL 또는 http URL)의 일본어를 한국어로 덮어 그린 data URL 반환 + 블록 수
+async function inpaintImage(imageSrc: string): Promise<{ dataUrl: string; count: number }> {
+  const res = await fetch("/api/translate/inpaint", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image: imageSrc }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error);
+  const boxes = json.data as Box[];
+
+  const img = new Image();
+  img.crossOrigin = "anonymous"; // Supabase 공개 URL을 캔버스로 읽기 위해
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("이미지 로드 실패"));
+    img.src = imageSrc;
+  });
+  const c = document.createElement("canvas");
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  const ctx = c.getContext("2d")!;
+  ctx.drawImage(img, 0, 0);
+  for (const b of boxes) {
+    const x = b.x * c.width, y = b.y * c.height, w = b.w * c.width, h = b.h * c.height;
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = "#14233B";
+    let size = Math.max(10, Math.min(h * 0.65, 28));
+    ctx.font = `${size}px "Noto Sans KR", sans-serif`;
+    ctx.textBaseline = "middle";
+    while (ctx.measureText(b.translation).width > w && size > 8) {
+      size -= 1;
+      ctx.font = `${size}px "Noto Sans KR", sans-serif`;
+    }
+    ctx.fillText(b.translation, x + 2, y + h / 2);
+  }
+  return { dataUrl: c.toDataURL("image/jpeg", 0.85), count: boxes.length };
+}
+
 async function translateDataUrl(dataUrl: string): Promise<Result> {
   const res = await fetch("/api/translate", {
     method: "POST",
@@ -114,7 +154,7 @@ export default function TranslatePage() {
         )}
       </div>
 
-      {viewing && <HistoryDetail item={viewing} onClose={() => setViewing(null)} />}
+      {viewing && <HistoryDetail item={viewing} onClose={() => setViewing(null)} onUpdated={loadHistory} />}
 
       <style jsx global>{`
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -124,11 +164,31 @@ export default function TranslatePage() {
 }
 
 /* ---------------- 최근 번역 다시보기 ---------------- */
-function HistoryDetail({ item, onClose }: { item: Translation; onClose: () => void }) {
+function HistoryDetail({ item, onClose, onUpdated }: { item: Translation; onClose: () => void; onUpdated: () => void }) {
   const [hideBubble, setHideBubble] = useState(false);
   const [showReplaced, setShowReplaced] = useState(false);
-  const hasReplaced = !!item.replaced_url;
-  const shownSrc = showReplaced && item.replaced_url ? item.replaced_url : item.image_url;
+  const [replacedUrl, setReplacedUrl] = useState<string | null>(item.replaced_url);
+  const [working, setWorking] = useState(false);
+  const hasReplaced = !!replacedUrl;
+  const shownSrc = showReplaced && replacedUrl ? replacedUrl : item.image_url;
+
+  async function makeReplacement() {
+    if (!item.image_url) return;
+    setWorking(true);
+    try {
+      const { dataUrl, count } = await inpaintImage(item.image_url);
+      const url = await uploadPhoto(dataUrlToFile(dataUrl, "replaced.jpg"), "translations");
+      await supabase.from("translations").update({ replaced_url: url }).eq("id", item.id);
+      setReplacedUrl(url);
+      setShowReplaced(true);
+      onUpdated();
+      if (count === 0) alert("인식된 글자가 없어 덮어쓸 내용이 없었어요.");
+    } catch (e: any) {
+      alert("변환 실패: " + e.message);
+    } finally {
+      setWorking(false);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/40" onClick={onClose}>
@@ -138,6 +198,11 @@ function HistoryDetail({ item, onClose }: { item: Translation; onClose: () => vo
           <div className="relative rounded-2xl shadow-soft">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={shownSrc || item.image_url} alt="" className="w-full rounded-2xl" />
+            {working && (
+              <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-ink/40">
+                <div className="rounded-xl bg-white px-4 py-3"><Spinner label="글자 바꾸는 중…" /></div>
+              </div>
+            )}
             {!showReplaced && (
               <button
                 onClick={() => setHideBubble((h) => !h)}
@@ -156,10 +221,16 @@ function HistoryDetail({ item, onClose }: { item: Translation; onClose: () => vo
           <Bubble result={{ original: item.original || "", reading: "", translation: item.translation || "", explanation: item.explanation || "" }} />
         )}
 
-        {hasReplaced && (
-          <button className="btn-ghost mt-3 w-full text-sm" onClick={() => setShowReplaced((s) => !s)}>
-            {showReplaced ? "원본 + 말풍선 보기" : "🇰🇷 한국어 덮어쓴 사진 보기"}
-          </button>
+        {item.image_url && (
+          hasReplaced ? (
+            <button className="btn-ghost mt-3 w-full text-sm" onClick={() => setShowReplaced((s) => !s)}>
+              {showReplaced ? "원본 + 말풍선 보기" : "🇰🇷 한국어 덮어쓴 사진 보기"}
+            </button>
+          ) : (
+            <button className="btn-primary mt-3 w-full text-sm" onClick={makeReplacement} disabled={working}>
+              {working ? "변환 중…" : "🇰🇷 사진 속 글자 한국어로 바꾸기"}
+            </button>
+          )
         )}
         <button className="btn-ghost mt-2 w-full" onClick={onClose}>닫기</button>
       </div>

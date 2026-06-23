@@ -156,3 +156,8 @@ create policy "own_select" on conversations for select using (auth.uid() = user_
 create policy "own_insert" on conversations for insert with check (auth.uid() = user_id);
 create policy "own_update" on conversations for update using (auth.uid() = user_id);
 create policy "own_delete" on conversations for delete using (auth.uid() = user_id);
+
+-- ============================================================
+--  마이그레이션 3: 일정 간 이동방법 캐시 (한번 조회하면 저장)
+-- ============================================================
+alter table itinerary_items add column if not exists transit_cache jsonb;

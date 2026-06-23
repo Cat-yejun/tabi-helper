@@ -26,21 +26,23 @@ function placeQuery(x: ItineraryItem): string {
   return x.address ? `${name} ${x.address}` : name;
 }
 
-// 두 일정 사이의 대중교통 이동을 요약해서 보여주는 커넥터 (탭하면 로드)
+// 두 일정 사이의 대중교통 이동을 요약해서 보여주는 커넥터 (탭하면 로드, 결과는 캐시)
 function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem }) {
+  // from 항목에 저장해둔 캐시가 있으면 바로 사용
+  const cached = (from as any).transit_cache || null;
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState<{
     mode: "대중교통" | "도보"; duration?: string; fare?: string; lines: { vehicle: string; name: string }[];
-  } | null>(null);
+  } | null>(cached);
 
   // 장소 이름(+주소)으로 길찾기 — AI가 추정한 부정확한 좌표 대신 구글 지오코딩에 맡김
   const fromQ = placeQuery(from);
   const toQ = placeQuery(to);
 
-  async function fetchRoute() {
-    if (info || loading) return;
+  async function fetchRoute(force = false) {
+    if ((info && !force) || loading) return;
     setLoading(true);
     setErr("");
     try {
@@ -75,12 +77,15 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
           vehicle: vehicleKo[s.transit.line?.vehicle?.type || ""] || "대중교통",
           name: s.transit.line?.short_name || s.transit.line?.name || "",
         }));
-      setInfo({
+      const newInfo = {
         mode: usedMode,
         duration: leg.duration?.text,
         fare: (result.routes[0] as any).fare?.text,
         lines,
-      });
+      };
+      setInfo(newInfo);
+      // from 항목에 캐시 저장 (다시 들어와도 유지)
+      supabase.from("itinerary_items").update({ transit_cache: newInfo }).eq("id", from.id);
     } catch (e: any) {
       const status = e?.code || e?.status || "UNKNOWN_ERROR";
       console.error("Directions error:", status, e);
@@ -98,7 +103,7 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
 
   function toggle() {
     setOpen((o) => !o);
-    if (!open) fetchRoute();
+    if (!open && !info) fetchRoute();
   }
 
   return (
@@ -144,6 +149,9 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
                 >
                   🗺️ 구글 지도에서 열기
                 </a>
+                <button className="font-medium text-muted" onClick={() => fetchRoute(true)} disabled={loading}>
+                  ↻ 다시 조회
+                </button>
               </div>
             </div>
           )}
@@ -199,6 +207,7 @@ function ItineraryInner() {
       category: editing.category || "관광",
       note: editing.note || null,
       sort_order: editing.sort_order ?? items.length,
+      transit_cache: null, // 장소가 바뀌면 이전 이동 캐시 무효화
     };
     if (editing.id) await supabase.from("itinerary_items").update(payload).eq("id", editing.id);
     else await supabase.from("itinerary_items").insert(payload);
