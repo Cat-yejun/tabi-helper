@@ -22,8 +22,9 @@ function cleanPlaceName(name: string): string {
   return s.trim();
 }
 function placeQuery(x: ItineraryItem): string {
-  const name = cleanPlaceName(x.place);
-  return x.address ? `${name} ${x.address}` : name;
+  // 주소는 AI가 잘못 채우는 경우가 많아(장소명과 불일치) 붙이지 않고,
+  // 정제된 장소명만 사용 — 구글이 이름으로 더 정확히 지오코딩함
+  return cleanPlaceName(x.place);
 }
 
 // 두 일정 사이의 대중교통 이동을 요약해서 보여주는 커넥터 (탭하면 로드, 결과는 캐시)
@@ -51,8 +52,7 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
 
       // 콜백으로 status 를 정확히 읽음
       function routeOnce(mode: "TRANSIT" | "WALKING"): Promise<{ result: any; status: string }> {
-        const req: any = { origin: fromQ, destination: toQ, travelMode: g.maps.TravelMode[mode], region: "jp" };
-        if (mode === "TRANSIT") req.transitOptions = { departureTime: new Date() };
+        const req: any = { origin: fromQ, destination: toQ, travelMode: g.maps.TravelMode[mode] };
         return new Promise((resolve) => svc.route(req, (res: any, st: any) => resolve({ result: res, status: String(st) })));
       }
 

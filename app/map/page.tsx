@@ -34,13 +34,8 @@ function MapInner() {
   const [mode, setMode] = useState<Mode>("TRANSIT");
   const [steps, setSteps] = useState<Step[]>([]);
   const [summary, setSummary] = useState<{ duration?: string; distance?: string; fare?: string } | null>(null);
-  // 대중교통 출발 시각 (기본: 내일 오전 9시). datetime-local 문자열
-  const [departAt, setDepartAt] = useState<string>(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    d.setHours(9, 0, 0, 0);
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  });
+  // 대중교통 출발 시각 (선택). 비우면 구글이 현재 시각 기준으로 처리. datetime-local 문자열
+  const [departAt, setDepartAt] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
@@ -131,13 +126,14 @@ function MapInner() {
         origin,
         destination: destVal.trim(),
         travelMode: g.maps.TravelMode[modeVal],
-        region: "jp",
+        provideRouteAlternatives: true,
       };
-      // 대중교통은 출발 시각을 명시 (사용자가 고른 시각, 기본 내일 오전 9시)
-      if (modeVal === "TRANSIT") {
-        const dt = departAt ? new Date(departAt) : new Date();
-        req.transitOptions = { departureTime: isNaN(dt.getTime()) ? new Date() : dt };
+      // 대중교통 출발 시각: 입력했을 때만 명시(비우면 구글이 현재 기준 처리)
+      if (modeVal === "TRANSIT" && departAt) {
+        const dt = new Date(departAt);
+        if (!isNaN(dt.getTime())) req.transitOptions = { departureTime: dt };
       }
+      console.log("Directions request:", JSON.stringify({ origin, destination: destVal, mode: modeVal }));
 
       // 콜백 방식으로 status 를 정확히 읽음 (Promise 거부에 의존하지 않음)
       const { result, status } = await new Promise<{ result: any; status: string }>((resolve) => {
@@ -241,13 +237,16 @@ function MapInner() {
 
         {mode === "TRANSIT" && (
           <label className="flex items-center gap-2 text-sm">
-            <span className="shrink-0 text-muted">출발 시각</span>
+            <span className="shrink-0 text-muted">출발 시각<br /><span className="text-xs">(선택)</span></span>
             <input
               type="datetime-local"
               className="field py-1.5"
               value={departAt}
               onChange={(e) => setDepartAt(e.target.value)}
             />
+            {departAt && (
+              <button className="shrink-0 text-xs text-muted" onClick={() => setDepartAt("")}>지금</button>
+            )}
           </label>
         )}
 
