@@ -12,11 +12,27 @@ export const supabase = createClient(url, anon, {
   },
 });
 
-// 매직링크 발송
-export async function sendMagicLink(email: string) {
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.origin },
+// 아이디를 내부 이메일로 변환 (Supabase Auth 는 이메일 기반이라 가짜 도메인 사용)
+function usernameToEmail(username: string): string {
+  const clean = username.trim().toLowerCase().replace(/[^a-z0-9_.-]/g, "");
+  return `${clean}@tabi.local`;
+}
+
+// 아이디+비밀번호 회원가입
+export async function signUpUsername(username: string, password: string) {
+  const { error } = await supabase.auth.signUp({
+    email: usernameToEmail(username),
+    password,
+    options: { data: { username: username.trim() } },
+  });
+  if (error) throw error;
+}
+
+// 아이디+비밀번호 로그인
+export async function signInUsername(username: string, password: string) {
+  const { error } = await supabase.auth.signInWithPassword({
+    email: usernameToEmail(username),
+    password,
   });
   if (error) throw error;
 }

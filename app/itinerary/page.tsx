@@ -27,67 +27,44 @@ function placeQuery(x: ItineraryItem): string {
   return cleanPlaceName(x.place);
 }
 
-// 두 일정 사이의 대중교통 이동을 요약해서 보여주는 커넥터 (탭하면 로드, 결과는 캐시)
+// 두 일정 사이 이동: 도보 거리/시간을 보여주고, 대중교통은 구글 지도 링크로 안내
+// (일본 대중교통은 구글 Directions API 미지원이라 앱 내 계산 불가)
 function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem }) {
-  // from 항목에 저장해둔 캐시가 있으면 바로 사용
   const cached = (from as any).transit_cache || null;
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [info, setInfo] = useState<{
-    mode: "대중교통" | "도보"; duration?: string; fare?: string; lines: { vehicle: string; name: string }[];
-  } | null>(cached);
+  const [info, setInfo] = useState<{ duration?: string; distance?: string } | null>(cached);
 
-  // 장소 이름(+주소)으로 길찾기 — AI가 추정한 부정확한 좌표 대신 구글 지오코딩에 맡김
   const fromQ = placeQuery(from);
   const toQ = placeQuery(to);
+  const gmapsTransit = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(fromQ)}&destination=${encodeURIComponent(toQ)}&travelmode=transit`;
 
-  async function fetchRoute(force = false) {
+  async function fetchWalking(force = false) {
     if ((info && !force) || loading) return;
     setLoading(true);
     setErr("");
     try {
       const g = await loadGoogleMaps();
       const svc = new g.maps.DirectionsService();
-
-      // 콜백으로 status 를 정확히 읽음
-      function routeOnce(mode: "TRANSIT" | "WALKING"): Promise<{ result: any; status: string }> {
-        const req: any = { origin: fromQ, destination: toQ, travelMode: g.maps.TravelMode[mode] };
-        return new Promise((resolve) => svc.route(req, (res: any, st: any) => resolve({ result: res, status: String(st) })));
+      const { result, status } = await new Promise<{ result: any; status: string }>((resolve) => {
+        svc.route(
+          { origin: fromQ, destination: toQ, travelMode: g.maps.TravelMode.WALKING },
+          (res: any, st: any) => resolve({ result: res, status: String(st) })
+        );
+      });
+      if (status === "OK" && result?.routes?.length) {
+        const leg = result.routes[0].legs[0];
+        const newInfo = { duration: leg.duration?.text, distance: leg.distance?.text };
+        setInfo(newInfo);
+        const { error: cacheErr } = await supabase
+          .from("itinerary_items").update({ transit_cache: newInfo }).eq("id", from.id);
+        if (cacheErr) console.error("이동방법 캐시 저장 실패:", cacheErr.message);
+      } else {
+        setErr(`도보 경로를 찾지 못했어요 [${status}]`);
       }
-
-      let { result, status } = await routeOnce("TRANSIT");
-      let usedMode: "대중교통" | "도보" = "대중교통";
-      if (status === "ZERO_RESULTS") {
-        ({ result, status } = await routeOnce("WALKING"));
-        usedMode = "도보";
-      }
-      if (status !== "OK" || !result?.routes?.length) {
-        setErr(`경로를 찾지 못했어요 [${status}]`);
-        setLoading(false);
-        return;
-      }
-
-      const leg = result.routes[0].legs[0];
-      const lines = (leg.steps || [])
-        .filter((s: any) => s.transit)
-        .map((s: any) => ({
-          vehicle: vehicleKo[s.transit.line?.vehicle?.type || ""] || "대중교통",
-          name: s.transit.line?.short_name || s.transit.line?.name || "",
-        }));
-      const newInfo = {
-        mode: usedMode,
-        duration: leg.duration?.text,
-        fare: (result.routes[0] as any).fare?.text,
-        lines,
-      };
-      setInfo(newInfo);
-      // from 항목에 캐시 저장 (다시 들어와도 유지). 실패 시 콘솔에 표시(컬럼 없을 때 등)
-      const { error: cacheErr } = await supabase
-        .from("itinerary_items").update({ transit_cache: newInfo }).eq("id", from.id);
-      if (cacheErr) console.error("이동방법 캐시 저장 실패:", cacheErr.message);
     } catch (e: any) {
-      console.error("Directions error:", e);
+      console.error(e);
       setErr("경로 확인 중 오류가 발생했어요");
     } finally {
       setLoading(false);
@@ -96,55 +73,31 @@ function TransitConnector({ from, to }: { from: ItineraryItem; to: ItineraryItem
 
   function toggle() {
     setOpen((o) => !o);
-    if (!open && !info) fetchRoute();
+    if (!open && !info) fetchWalking();
   }
 
   return (
     <div className="overflow-hidden rounded-xl border border-transit/40 bg-transit/5">
       <button onClick={toggle} className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-transit">
-        <span className="text-base">{info?.mode === "도보" ? "🚶" : "🚆"}</span>
+        <span className="text-base">🚶</span>
         <span className="flex-1">이동방법 {info ? "" : "보기"}</span>
-        {info?.duration && <span className="rounded-full bg-transit px-2 py-0.5 text-[11px] font-bold text-white">{info.duration}</span>}
+        {info?.duration && <span className="rounded-full bg-transit px-2 py-0.5 text-[11px] font-bold text-white">도보 {info.duration}</span>}
         <span className="text-transit/60">{open ? "▴" : "▾"}</span>
       </button>
       {open && (
         <div className="border-t border-transit/20 px-3 py-2.5 text-xs">
-          {loading && <Spinner label="경로 확인 중…" />}
+          {loading && <Spinner label="도보 경로 확인 중…" />}
           {err && <p className="text-torii">{err}</p>}
           {info && (
             <div className="space-y-1.5">
-              <div className="flex flex-wrap items-center gap-1.5">
-                {info.lines.length === 0 ? (
-                  <span className="text-muted">{info.mode === "도보" ? "도보 이동" : "환승 없이 도보 구간"}</span>
-                ) : (
-                  info.lines.map((l, i) => (
-                    <span key={i} className="chip bg-transit/15 text-transit">
-                      {l.vehicle} {l.name}
-                    </span>
-                  ))
-                )}
-              </div>
-              <p className="text-muted">
-                {info.mode} · 소요 {info.duration}{info.fare ? ` · 요금 ${info.fare}` : ""}
-              </p>
+              <p className="text-muted">🚶 도보 {info.duration}{info.distance ? ` · ${info.distance}` : ""}</p>
               <div className="flex flex-wrap gap-3 pt-0.5">
-                <Link
-                  className="font-medium text-transit"
-                  href={`/map?fromName=${encodeURIComponent(fromQ)}&toName=${encodeURIComponent(toQ)}`}
-                >
-                  상세 경로 보기 →
+                <Link className="font-medium text-transit" href={`/map?fromName=${encodeURIComponent(fromQ)}&toName=${encodeURIComponent(toQ)}`}>
+                  지도에서 도보 경로 →
                 </Link>
-                <a
-                  className="font-medium text-muted"
-                  href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(fromQ)}&destination=${encodeURIComponent(toQ)}&travelmode=transit`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  🗺️ 구글 지도에서 열기
+                <a className="font-medium text-amber" href={gmapsTransit} target="_blank" rel="noopener noreferrer">
+                  🚆 구글 지도에서 대중교통 보기
                 </a>
-                <button className="font-medium text-muted" onClick={() => fetchRoute(true)} disabled={loading}>
-                  ↻ 다시 조회
-                </button>
               </div>
             </div>
           )}
@@ -160,6 +113,7 @@ function ItineraryInner() {
   const [active, setActive] = useState<Itinerary | null>(null);
   const [items, setItems] = useState<ItineraryItem[]>([]);
   const [showAI, setShowAI] = useState(false);
+  const [sharing, setSharing] = useState<{ trip: Itinerary; url: string } | null>(null);
   const [editing, setEditing] = useState<Partial<ItineraryItem> | null>(null);
 
   async function loadTrips() {
@@ -218,6 +172,19 @@ function ItineraryInner() {
     setActive(null);
     setItems([]);
     await loadTrips();
+  }
+
+  // 공유 코드 생성(없으면) 후 링크 시트 표시
+  async function shareTrip(t: Itinerary) {
+    let code = (t as any).share_code as string | undefined;
+    if (!code) {
+      code = Math.random().toString(36).slice(2, 10);
+      const { error } = await supabase.from("itineraries").update({ share_code: code }).eq("id", t.id);
+      if (error) { alert("공유 코드 생성 실패: " + error.message); return; }
+      await loadTrips();
+    }
+    const url = `${window.location.origin}/shared/${code}`;
+    setSharing({ trip: t, url });
   }
 
   // 날짜별 그룹
@@ -322,19 +289,28 @@ function ItineraryInner() {
         ))}
 
         {active && (
-          <div className="flex gap-2">
-            <button
-              className="btn-ghost flex-1 text-sm"
-              onClick={() => setEditing({ day_date: active.start_date, category: "관광" })}
-            >
-              + 일정 추가
-            </button>
-            <button className="btn-ghost text-sm text-torii" onClick={() => removeTrip(active)}>
-              여행 삭제
-            </button>
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <button
+                className="btn-ghost flex-1 text-sm"
+                onClick={() => setEditing({ day_date: active.start_date, category: "관광" })}
+              >
+                + 일정 추가
+              </button>
+              <button className="btn-ghost flex-1 text-sm text-transit" onClick={() => shareTrip(active)}>
+                🔗 공유
+              </button>
+              <button className="btn-ghost text-sm text-torii" onClick={() => removeTrip(active)}>
+                삭제
+              </button>
+            </div>
           </div>
         )}
       </div>
+
+      {sharing && (
+        <ShareSheet itinerary={sharing.trip} url={sharing.url} onClose={() => setSharing(null)} />
+      )}
 
       {showAI && (
         <AISheet
@@ -586,6 +562,47 @@ function ItemSheet({
           <button className="btn-ghost flex-1" onClick={onClose}>취소</button>
           <button className="btn-primary flex-1" onClick={onSave} disabled={!item.place}>저장</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ShareSheet({ itinerary, url, onClose }: { itinerary: Itinerary; url: string; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* 클립보드 권한 없으면 사용자가 직접 복사 */
+    }
+  }
+  async function nativeShare() {
+    if (navigator.share) {
+      try { await navigator.share({ title: itinerary.title, text: `${itinerary.title} 일정 공유`, url }); } catch { /* 취소 */ }
+    } else {
+      copy();
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/40" onClick={onClose}>
+      <div className="w-full max-w-md rounded-t-3xl bg-paper p-4" onClick={(e) => e.stopPropagation()}>
+        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-line" />
+        <h2 className="mb-1 font-round text-lg font-bold">🔗 일정 공유</h2>
+        <p className="mb-3 text-sm text-muted">
+          이 링크를 받은 사람은 로그인 없이 ‘{itinerary.title}’ 일정을 볼 수 있어요. (읽기 전용)
+        </p>
+        <div className="flex items-center gap-2 rounded-xl border border-line bg-white p-2">
+          <input className="min-w-0 flex-1 bg-transparent px-1 text-sm text-ink outline-none" readOnly value={url} />
+          <button className="btn-ghost shrink-0 px-3 py-1.5 text-xs" onClick={copy}>
+            {copied ? "복사됨!" : "복사"}
+          </button>
+        </div>
+        <button className="btn-primary mt-3 w-full" onClick={nativeShare}>
+          공유하기
+        </button>
+        <button className="btn-ghost mt-2 w-full" onClick={onClose}>닫기</button>
       </div>
     </div>
   );

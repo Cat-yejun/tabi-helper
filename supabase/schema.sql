@@ -161,3 +161,25 @@ create policy "own_delete" on conversations for delete using (auth.uid() = user_
 --  마이그레이션 3: 일정 간 이동방법 캐시 (한번 조회하면 저장)
 -- ============================================================
 alter table itinerary_items add column if not exists transit_cache jsonb;
+
+-- ============================================================
+--  마이그레이션 4: 여행 공유 (공유 코드로 일정+영수증 조회)
+-- ============================================================
+-- 공유 토큰을 itineraries 에 부여
+alter table itineraries add column if not exists share_code text unique;
+
+-- 공유된 일정을 "코드를 아는 사람"이 읽을 수 있도록 별도 정책 추가
+-- (기존 own_select 는 본인만; 아래는 share_code 가 있으면 누구나 select 허용)
+drop policy if exists "shared_select" on itineraries;
+create policy "shared_select" on itineraries
+  for select using (share_code is not null);
+
+-- 공유된 일정의 항목도 읽기 허용
+drop policy if exists "shared_items_select" on itinerary_items;
+create policy "shared_items_select" on itinerary_items
+  for select using (
+    exists (select 1 from itineraries i where i.id = itinerary_items.itinerary_id and i.share_code is not null)
+  );
+
+-- 공유 일정과 같은 기간/사용자의 영수증도 함께 보고 싶다면:
+-- (여기서는 단순화를 위해 영수증은 공유하지 않음. 일정만 공유)

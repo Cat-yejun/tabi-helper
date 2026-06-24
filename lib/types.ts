@@ -20,6 +20,7 @@ export type Itinerary = {
   title: string;
   start_date: string | null;
   end_date: string | null;
+  share_code?: string | null;
 };
 
 export type ItineraryItem = {

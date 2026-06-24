@@ -31,11 +31,9 @@ function MapInner() {
   const [ready, setReady] = useState(false);
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
-  const [mode, setMode] = useState<Mode>("TRANSIT");
+  const [mode, setMode] = useState<Mode>("WALKING");
   const [steps, setSteps] = useState<Step[]>([]);
   const [summary, setSummary] = useState<{ duration?: string; distance?: string; fare?: string } | null>(null);
-  // 대중교통 출발 시각 (선택). 비우면 구글이 현재 시각 기준으로 처리. datetime-local 문자열
-  const [departAt, setDepartAt] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
@@ -94,7 +92,7 @@ function MapInner() {
               setOrigin(originVal);
             } catch { /* 실패 시 사용자가 직접 입력 */ }
           }
-          runRoute(originVal, to, "TRANSIT");
+          runRoute(originVal, to, "WALKING");
         }
       })
       .catch((e) => setErr(e.message));
@@ -117,6 +115,15 @@ function MapInner() {
     setErr("");
     if (!destVal.trim()) return setErr("도착지를 입력하세요");
     setMode(modeVal);
+
+    // 일본 대중교통은 구글이 외부 API(Directions)로 제공하지 않음 → 구글 지도 앱으로 안내
+    if (modeVal === "TRANSIT") {
+      setSteps([]);
+      setSummary(null);
+      setErr("일본 대중교통은 구글 지도 앱에서 확인하세요. 아래 '구글 지도에서 대중교통 보기' 버튼을 눌러주세요.");
+      return;
+    }
+
     setLoading(true);
     try {
       const g = await loadGoogleMaps();
@@ -128,11 +135,6 @@ function MapInner() {
         travelMode: g.maps.TravelMode[modeVal],
         provideRouteAlternatives: true,
       };
-      // 대중교통 출발 시각: 입력했을 때만 명시(비우면 구글이 현재 기준 처리)
-      if (modeVal === "TRANSIT" && departAt) {
-        const dt = new Date(departAt);
-        if (!isNaN(dt.getTime())) req.transitOptions = { departureTime: dt };
-      }
       console.log("Directions request:", JSON.stringify({ origin, destination: destVal, mode: modeVal }));
 
       // 콜백 방식으로 status 를 정확히 읽음 (Promise 거부에 의존하지 않음)
@@ -141,19 +143,14 @@ function MapInner() {
       });
 
       if (status !== "OK" || !result?.routes?.length) {
-        // 대중교통이 0건이면 안내만 하고 자동 전환하지 않음(원인 파악 위해)
-        if (status === "ZERO_RESULTS" && modeVal === "TRANSIT") {
-          setErr("이 시간대·구간에 대중교통 경로가 없어요. 도보/자동차 버튼을 눌러보세요. [ZERO_RESULTS]");
-        } else {
-          const messages: Record<string, string> = {
-            ZERO_RESULTS: "이 두 지점 사이의 경로를 찾지 못했어요.",
-            OVER_QUERY_LIMIT: "API 호출 한도를 초과했어요. Google Cloud 콘솔에서 일일 할당량/결제 상태를 확인해주세요.",
-            REQUEST_DENIED: "API 설정 문제예요. 결제 계정 연결과 키의 API 제한사항을 확인해주세요.",
-            INVALID_REQUEST: "출발지/도착지 형식을 확인해주세요. (출발지가 비어있을 수 있어요)",
-            NOT_FOUND: "입력한 장소를 찾을 수 없어요. 더 구체적으로 입력해보세요.",
-          };
-          setErr((messages[status] || "경로를 찾지 못했어요.") + ` [${status}]`);
-        }
+        const messages: Record<string, string> = {
+          ZERO_RESULTS: "이 두 지점 사이의 경로를 찾지 못했어요.",
+          OVER_QUERY_LIMIT: "API 호출 한도를 초과했어요. Google Cloud 콘솔에서 일일 할당량/결제 상태를 확인해주세요.",
+          REQUEST_DENIED: "API 설정 문제예요. 결제 계정 연결과 키의 API 제한사항을 확인해주세요.",
+          INVALID_REQUEST: "출발지/도착지 형식을 확인해주세요. (출발지가 비어있을 수 있어요)",
+          NOT_FOUND: "입력한 장소를 찾을 수 없어요. 더 구체적으로 입력해보세요.",
+        };
+        setErr((messages[status] || "경로를 찾지 못했어요.") + ` [${status}]`);
         setSteps([]);
         setSummary(null);
         return;
@@ -235,34 +232,38 @@ function MapInner() {
           ))}
         </div>
 
-        {mode === "TRANSIT" && (
-          <label className="flex items-center gap-2 text-sm">
-            <span className="shrink-0 text-muted">출발 시각<br /><span className="text-xs">(선택)</span></span>
-            <input
-              type="datetime-local"
-              className="field py-1.5"
-              value={departAt}
-              onChange={(e) => setDepartAt(e.target.value)}
-            />
-            {departAt && (
-              <button className="shrink-0 text-xs text-muted" onClick={() => setDepartAt("")}>지금</button>
+        {mode === "TRANSIT" ? (
+          <div className="space-y-2">
+            <div className="rounded-xl bg-amber/10 p-3 text-sm text-ink">
+              🚆 일본 대중교통(전철·버스)은 구글 지도 앱에서 가장 정확하게 볼 수 있어요. 아래 버튼을 누르면 출발·도착이 채워진 채로 열려요.
+            </div>
+            {destination.trim() && (
+              <a
+                className="btn-primary block w-full text-center"
+                href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin.trim() || "")}&destination=${encodeURIComponent(destination.trim())}&travelmode=transit`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                🗺️ 구글 지도에서 대중교통 보기
+              </a>
             )}
-          </label>
-        )}
-
-        <button className="btn-primary w-full" onClick={route} disabled={loading || !ready}>
-          {loading ? "경로 찾는 중…" : "길찾기"}
-        </button>
-
-        {destination.trim() && (
-          <a
-            className="btn-ghost block w-full text-center text-sm"
-            href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin.trim() || "")}&destination=${encodeURIComponent(destination.trim())}&travelmode=${mode.toLowerCase()}`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            🗺️ 구글 지도 앱에서 열기
-          </a>
+          </div>
+        ) : (
+          <>
+            <button className="btn-primary w-full" onClick={route} disabled={loading || !ready}>
+              {loading ? "경로 찾는 중…" : "길찾기"}
+            </button>
+            {destination.trim() && (
+              <a
+                className="btn-ghost block w-full text-center text-sm"
+                href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin.trim() || "")}&destination=${encodeURIComponent(destination.trim())}&travelmode=${mode.toLowerCase()}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                🗺️ 구글 지도 앱에서 열기
+              </a>
+            )}
+          </>
         )}
 
         {summary && (

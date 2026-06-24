@@ -32,10 +32,10 @@ export default function AccountPage() {
         <div className="card p-5">
           <div className="flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-ink font-round text-lg font-bold text-white">
-              {user?.email?.[0]?.toUpperCase() || "?"}
+              {((user?.user_metadata as any)?.username || user?.email?.split("@")[0] || "?")[0]?.toUpperCase()}
             </div>
             <div className="min-w-0">
-              <p className="truncate font-medium text-ink">{user?.email || "—"}</p>
+              <p className="truncate font-medium text-ink">{(user?.user_metadata as any)?.username || user?.email?.split("@")[0] || "—"}</p>
               <p className="text-xs text-muted">
                 {user?.created_at && `가입일 ${new Date(user.created_at).toLocaleDateString("ko-KR")}`}
               </p>
