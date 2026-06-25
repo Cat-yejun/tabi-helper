@@ -12,6 +12,19 @@ export type Expense = {
   items: ExpenseItem[];
   note: string | null;
   image_url: string | null;
+  itinerary_id?: string | null;
+};
+
+export type Profile = { id: string; username: string };
+export type TripMember = { itinerary_id: string; user_id: string; role: "owner" | "member"; username?: string };
+
+export type ShoppingItem = {
+  id: string;
+  created_at?: string;
+  name: string;
+  note: string | null;
+  checked: boolean;
+  sort_order: number;
 };
 
 export type Itinerary = {
@@ -43,6 +56,7 @@ export type ChatMessage = {
   conversation_id?: string;
   role: "user" | "assistant";
   content: string;
+  image?: string | null;
 };
 
 export type Conversation = {

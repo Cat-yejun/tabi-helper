@@ -193,6 +193,17 @@ function ItineraryInner() {
     const k = it.day_date || "미정";
     (byDay[k] ||= []).push(it);
   }
+  // 같은 날 안에서는 시간순 정렬 (시간 없는 항목은 맨 뒤, 그 안에선 추가 순서)
+  for (const k of Object.keys(byDay)) {
+    byDay[k].sort((a, b) => {
+      const ta = a.time?.trim() || "";
+      const tb = b.time?.trim() || "";
+      if (ta && tb) return ta.localeCompare(tb);
+      if (ta) return -1;
+      if (tb) return 1;
+      return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+    });
+  }
   const days = Object.keys(byDay).sort();
 
   return (
@@ -358,6 +369,12 @@ function AISheet({ onClose, onDone }: { onClose: () => void; onDone: (id: string
       .select()
       .single();
     if (error) throw error;
+
+    // 소유자를 팀 멤버(owner)로 등록
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      await supabase.from("trip_members").insert({ itinerary_id: trip.id, user_id: user.id, role: "owner" });
+    }
 
     const rows: any[] = [];
     (plan.days || []).forEach((d: any) => {
@@ -569,40 +586,108 @@ function ItemSheet({
 
 function ShareSheet({ itinerary, url, onClose }: { itinerary: Itinerary; url: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
+  const [members, setMembers] = useState<{ user_id: string; role: string; username: string }[]>([]);
+  const [nickname, setNickname] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  async function loadMembers() {
+    const { data: rows } = await supabase
+      .from("trip_members").select("user_id, role").eq("itinerary_id", itinerary.id);
+    if (!rows) return;
+    const ids = rows.map((r: any) => r.user_id);
+    const { data: profs } = await supabase.from("profiles").select("id, username").in("id", ids);
+    const nameById: Record<string, string> = {};
+    (profs || []).forEach((p: any) => { nameById[p.id] = p.username; });
+    setMembers(rows.map((r: any) => ({ ...r, username: nameById[r.user_id] || "(이름 없음)" })));
+  }
+  useEffect(() => { loadMembers(); }, []); // eslint-disable-line
+
   async function copy() {
+    try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}
+  }
+
+  async function addMember() {
+    const name = nickname.trim();
+    if (!name) return;
+    setAdding(true);
+    setMsg("");
     try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* 클립보드 권한 없으면 사용자가 직접 복사 */
+      // 닉네임으로 사용자 찾기
+      const { data: prof } = await supabase.from("profiles").select("id, username").ilike("username", name).maybeSingle();
+      if (!prof) { setMsg("그런 아이디를 가진 사용자가 없어요."); setAdding(false); return; }
+      const { error } = await supabase.from("trip_members")
+        .insert({ itinerary_id: itinerary.id, user_id: (prof as any).id, role: "member" });
+      if (error) {
+        setMsg(error.message.includes("duplicate") ? "이미 추가된 멤버예요." : "추가 실패: " + error.message);
+      } else {
+        setNickname("");
+        setMsg(`'${(prof as any).username}' 님을 추가했어요.`);
+        loadMembers();
+      }
+    } finally {
+      setAdding(false);
     }
   }
-  async function nativeShare() {
-    if (navigator.share) {
-      try { await navigator.share({ title: itinerary.title, text: `${itinerary.title} 일정 공유`, url }); } catch { /* 취소 */ }
-    } else {
-      copy();
-    }
+
+  async function removeMember(uid: string) {
+    await supabase.from("trip_members").delete().eq("itinerary_id", itinerary.id).eq("user_id", uid);
+    loadMembers();
   }
+
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/40" onClick={onClose}>
-      <div className="w-full max-w-md rounded-t-3xl bg-paper p-4" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-paper p-4" onClick={(e) => e.stopPropagation()}>
         <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-line" />
-        <h2 className="mb-1 font-round text-lg font-bold">🔗 일정 공유</h2>
+        <h2 className="mb-1 font-round text-lg font-bold">👥 함께 여행하기</h2>
         <p className="mb-3 text-sm text-muted">
-          이 링크를 받은 사람은 로그인 없이 ‘{itinerary.title}’ 일정을 볼 수 있어요. (읽기 전용)
+          멤버로 추가된 사람은 ‘{itinerary.title}’의 일정과 가계부를 <b>함께 수정·추가</b>할 수 있어요.
         </p>
-        <div className="flex items-center gap-2 rounded-xl border border-line bg-white p-2">
-          <input className="min-w-0 flex-1 bg-transparent px-1 text-sm text-ink outline-none" readOnly value={url} />
-          <button className="btn-ghost shrink-0 px-3 py-1.5 text-xs" onClick={copy}>
-            {copied ? "복사됨!" : "복사"}
+
+        {/* 멤버 추가 */}
+        <div className="flex items-center gap-2">
+          <input
+            className="field flex-1"
+            placeholder="추가할 사람의 아이디"
+            autoCapitalize="none"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addMember()}
+          />
+          <button className="btn-primary shrink-0 text-sm" onClick={addMember} disabled={adding || !nickname.trim()}>
+            추가
           </button>
         </div>
-        <button className="btn-primary mt-3 w-full" onClick={nativeShare}>
-          공유하기
-        </button>
-        <button className="btn-ghost mt-2 w-full" onClick={onClose}>닫기</button>
+        {msg && <p className="mt-2 text-xs text-transit">{msg}</p>}
+
+        {/* 멤버 목록 */}
+        <div className="mt-3 space-y-2">
+          {members.map((m) => (
+            <div key={m.user_id} className="flex items-center gap-2 rounded-xl border border-line bg-white p-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-sm font-bold text-white">
+                {m.username[0]?.toUpperCase()}
+              </div>
+              <span className="flex-1 truncate text-sm font-medium text-ink">{m.username}</span>
+              {m.role === "owner" ? (
+                <span className="chip bg-amber/15 text-amber">소유자</span>
+              ) : (
+                <button className="text-xs text-torii" onClick={() => removeMember(m.user_id)}>내보내기</button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* 읽기 전용 공유 링크 */}
+        <div className="mt-5 border-t border-line pt-4">
+          <p className="mb-2 text-sm font-medium text-ink">🔗 읽기 전용 링크</p>
+          <p className="mb-2 text-xs text-muted">로그인 없이 일정만 볼 수 있는 링크예요(수정 불가).</p>
+          <div className="flex items-center gap-2 rounded-xl border border-line bg-white p-2">
+            <input className="min-w-0 flex-1 bg-transparent px-1 text-sm text-ink outline-none" readOnly value={url} />
+            <button className="btn-ghost shrink-0 px-3 py-1.5 text-xs" onClick={copy}>{copied ? "복사됨!" : "복사"}</button>
+          </div>
+        </div>
+
+        <button className="btn-ghost mt-4 w-full" onClick={onClose}>닫기</button>
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import type { ChatMessage, Conversation } from "@/lib/types";
 import { Header } from "@/components/ui";
 import Markdown from "@/components/Markdown";
+import { fileToResizedDataUrl } from "@/lib/image";
 
 const SUGGESTIONS = [
   "삿포로역에서 오타루 가는 법",
@@ -18,6 +19,19 @@ export default function AssistantPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const imgRef = useRef<HTMLInputElement>(null);
+
+  async function onPickImage(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      setPendingImage(await fileToResizedDataUrl(file, 1280));
+    } catch {
+      alert("이미지를 불러오지 못했어요.");
+    }
+  }
   const [loading, setLoading] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
@@ -56,17 +70,16 @@ export default function AssistantPage() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  async function send(text: string) {
+  async function send(text: string, image?: string | null) {
     const content = text.trim();
-    if (!content || loading) return;
+    if ((!content && !image) || loading) return;
     setInput("");
     setLoading(true);
 
     let convId = activeId;
     try {
-      // 새 대화면 conversation 먼저 생성 (제목은 첫 메시지 앞부분)
       if (!convId) {
-        const title = content.length > 24 ? content.slice(0, 24) + "…" : content;
+        const title = (content || "사진 질문").length > 24 ? (content || "사진 질문").slice(0, 24) + "…" : (content || "사진 질문");
         const { data, error } = await supabase
           .from("conversations")
           .insert({ title })
@@ -77,16 +90,21 @@ export default function AssistantPage() {
         setActiveId(convId);
       }
 
-      const userMsg: ChatMessage = { role: "user", content };
+      const userMsg: ChatMessage = { role: "user", content: content || "이 사진에 대해 설명해줘.", image: image || null };
       const next = [...messages, userMsg];
       setMessages(next);
-      await supabase.from("chat_messages").insert({ role: "user", content, conversation_id: convId });
+      // DB엔 텍스트만 저장(이미지 용량 큼). 사진 첨부 표시만 남김
+      await supabase.from("chat_messages").insert({
+        role: "user",
+        content: (image ? "📷 (사진) " : "") + (content || "이 사진에 대해 설명해줘."),
+        conversation_id: convId,
+      });
 
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: next.map((m) => ({ role: m.role, content: m.content })),
+          messages: next.map((m) => ({ role: m.role, content: m.content, image: m.image || null })),
           city: "삿포로",
         }),
       });
@@ -145,6 +163,10 @@ export default function AssistantPage() {
                 m.role === "user" ? "whitespace-pre-wrap bg-ink text-white" : "border border-line bg-white text-ink"
               }`}
             >
+              {m.role === "user" && m.image && (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={m.image} alt="첨부" className="mb-1.5 max-h-48 rounded-lg object-cover" />
+              )}
               {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
             </div>
           </div>
@@ -165,21 +187,43 @@ export default function AssistantPage() {
       </div>
 
       <div className="sticky bottom-16 border-t border-line bg-paper p-3">
+        {pendingImage && (
+          <div className="mb-2 flex items-center gap-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={pendingImage} alt="첨부" className="h-16 w-16 rounded-lg object-cover" />
+            <button className="text-xs text-torii" onClick={() => setPendingImage(null)}>첨부 취소</button>
+          </div>
+        )}
         <div className="flex items-end gap-2">
+          <input ref={imgRef} type="file" accept="image/*" className="hidden" onChange={onPickImage} />
+          <button
+            className="btn-ghost shrink-0 px-3"
+            onClick={() => imgRef.current?.click()}
+            disabled={loading}
+            title="사진 첨부"
+          >
+            📷
+          </button>
           <textarea
             className="field max-h-28 flex-1 resize-none"
             rows={1}
-            placeholder="메시지 입력…"
+            placeholder={pendingImage ? "사진에 대해 물어보세요…" : "메시지 입력…"}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                send(input);
+                const img = pendingImage;
+                setPendingImage(null);
+                send(input, img);
               }
             }}
           />
-          <button className="btn-primary px-4" onClick={() => send(input)} disabled={loading || !input.trim()}>
+          <button
+            className="btn-primary px-4"
+            onClick={() => { const img = pendingImage; setPendingImage(null); send(input, img); }}
+            disabled={loading || (!input.trim() && !pendingImage)}
+          >
             전송
           </button>
         </div>

@@ -32,6 +32,8 @@ function ExpensesInner() {
   const [showCam, setShowCam] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<ExpenseSortKey>("date_desc");
+  const [activeCat, setActiveCat] = useState<string | null>(null);
+  const [groupByDay, setGroupByDay] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -61,6 +63,22 @@ function ExpensesInner() {
     return arr;
   }, [list, sortKey]);
 
+  // 종류 필터 적용
+  const filtered = useMemo(
+    () => (activeCat ? sorted.filter((e) => e.category === activeCat) : sorted),
+    [sorted, activeCat]
+  );
+
+  // 날짜별 그룹 (최신 날짜 먼저, 같은 날 내 시간순)
+  const dayGroups = useMemo(() => {
+    const map: Record<string, Expense[]> = {};
+    for (const e of filtered) (map[e.purchase_date || "날짜 미정"] ||= []).push(e);
+    for (const k of Object.keys(map)) {
+      map[k].sort((a, b) => (a.purchase_time || "").localeCompare(b.purchase_time || ""));
+    }
+    return Object.entries(map).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [filtered]);
+
   async function analyzeAndOpen(dataUrl: string) {
     setAnalyzing(true);
     setPendingImage(dataUrl);
@@ -77,6 +95,7 @@ function ExpensesInner() {
         ...emptyDraft(),
         store: d.store || "",
         purchase_date: d.purchase_date || emptyDraft().purchase_date,
+        purchase_time: d.purchase_time || null,
         total: Number(d.total) || 0,
         currency: d.currency || "JPY",
         category: d.category || "식비",
@@ -169,71 +188,75 @@ function ExpensesInner() {
         </div>
 
         {list.length > 0 && (
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-muted">정렬</span>
-            <select className="field py-1.5" value={sortKey} onChange={(e) => setSortKey(e.target.value as ExpenseSortKey)}>
-              {EXPENSE_SORTS.map((s) => (
-                <option key={s.key} value={s.key}>{s.label}</option>
-              ))}
-            </select>
-          </div>
+          <>
+            <div className="flex items-center gap-2 text-sm">
+              <select className="field py-1.5" value={sortKey} onChange={(e) => setSortKey(e.target.value as ExpenseSortKey)}>
+                {EXPENSE_SORTS.map((s) => (<option key={s.key} value={s.key}>{s.label}</option>))}
+              </select>
+              <button
+                className={`chip shrink-0 py-2 ${groupByDay ? "bg-ink text-white" : "bg-white text-muted border border-line"}`}
+                onClick={() => setGroupByDay((g) => !g)}
+              >
+                📅 날짜별
+              </button>
+            </div>
+
+            {/* 종류 토글 필터 */}
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                className={`chip ${activeCat === null ? "bg-transit text-white" : "bg-white text-muted border border-line"}`}
+                onClick={() => setActiveCat(null)}
+              >
+                전체
+              </button>
+              {CATEGORIES.map((c) => {
+                const sum = list.filter((e) => e.category === c).reduce((s, e) => s + (e.total || 0), 0);
+                if (sum === 0) return null;
+                return (
+                  <button
+                    key={c}
+                    className={`chip ${activeCat === c ? "bg-transit text-white" : "bg-white text-muted border border-line"}`}
+                    onClick={() => setActiveCat(activeCat === c ? null : c)}
+                  >
+                    {c} ¥{Math.round(sum).toLocaleString()}
+                  </button>
+                );
+              })}
+            </div>
+          </>
         )}
 
         {analyzing && (
-          <div className="card p-4">
-            <Spinner label="영수증을 읽는 중…" />
-          </div>
+          <div className="card p-4"><Spinner label="영수증을 읽는 중…" /></div>
         )}
 
         {list.length === 0 && !analyzing && (
           <div className="card p-8 text-center text-sm text-muted">
-            영수증을 찍으면 자동으로 항목·금액이 정리돼요.
+            영수증을 찍으면 자동으로 항목·금액·시간이 정리돼요.
           </div>
         )}
 
-        {sorted.map((e) => (
-          <div key={e.id} className="card p-4">
-            <div className="flex items-start gap-3">
-              {e.image_url && (
-                <button onClick={() => setLightbox(e.image_url!)} className="shrink-0">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={e.image_url} alt="" className="h-14 w-14 rounded-lg object-cover" />
-                </button>
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <CategoryChip value={e.category} />
-                      <p className="truncate font-medium text-ink">{e.store || "이름 없음"}</p>
-                    </div>
-                    <p className="mt-0.5 text-xs text-muted">
-                      {e.purchase_date}{e.purchase_time ? ` · ${e.purchase_time}` : ""}
-                    </p>
+        {/* 날짜별 보기 */}
+        {groupByDay
+          ? dayGroups.map(([day, rows]) => {
+              const daySum = rows.reduce((s, e) => s + (e.total || 0), 0);
+              return (
+                <section key={day}>
+                  <div className="mb-1.5 flex items-center justify-between px-1">
+                    <h2 className="font-round font-bold text-ink">{day}</h2>
+                    <span className="font-round font-bold text-torii">¥{Math.round(daySum).toLocaleString()}</span>
                   </div>
-                  <p className="shrink-0 font-round text-lg font-bold text-ink">
-                    ¥{Math.round(e.total || 0).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-            </div>
-            {e.items?.length > 0 && (
-              <ul className="mt-2 space-y-0.5 text-sm text-muted">
-                {e.items.slice(0, 4).map((it, i) => (
-                  <li key={i} className="flex justify-between">
-                    <span className="truncate">{it.name}{it.qty && it.qty > 1 ? ` ×${it.qty}` : ""}</span>
-                    <span>¥{Number(it.price).toLocaleString()}</span>
-                  </li>
-                ))}
-                {e.items.length > 4 && <li className="text-xs">외 {e.items.length - 4}개</li>}
-              </ul>
-            )}
-            <div className="mt-3 flex gap-2">
-              <button className="btn-ghost flex-1 text-sm" onClick={() => editExisting(e)}>수정</button>
-              <button className="btn-ghost text-sm text-torii" onClick={() => remove(e.id)}>삭제</button>
-            </div>
-          </div>
-        ))}
+                  <div className="space-y-2">
+                    {rows.map((e) => (
+                      <ExpenseCard key={e.id} e={e} onZoom={setLightbox} onEdit={editExisting} onRemove={remove} />
+                    ))}
+                  </div>
+                </section>
+              );
+            })
+          : filtered.map((e) => (
+              <ExpenseCard key={e.id} e={e} onZoom={setLightbox} onEdit={editExisting} onRemove={remove} />
+            ))}
       </div>
 
       {draft && (
@@ -247,6 +270,59 @@ function ExpensesInner() {
         />
       )}
     </>
+  );
+}
+
+function ExpenseCard({
+  e, onZoom, onEdit, onRemove,
+}: {
+  e: Expense;
+  onZoom: (url: string) => void;
+  onEdit: (e: Expense) => void;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <div className="card p-4">
+      <div className="flex items-start gap-3">
+        {e.image_url && (
+          <button onClick={() => onZoom(e.image_url!)} className="shrink-0">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={e.image_url} alt="" className="h-14 w-14 rounded-lg object-cover" />
+          </button>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <CategoryChip value={e.category} />
+                <p className="truncate font-medium text-ink">{e.store || "이름 없음"}</p>
+              </div>
+              <p className="mt-0.5 text-xs text-muted">
+                {e.purchase_date}{e.purchase_time ? ` · ${e.purchase_time}` : ""}
+              </p>
+            </div>
+            <p className="shrink-0 font-round text-lg font-bold text-ink">
+              ¥{Math.round(e.total || 0).toLocaleString()}
+            </p>
+          </div>
+        </div>
+      </div>
+      {e.items?.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-sm text-muted">
+          {e.items.slice(0, 4).map((it, i) => (
+            <li key={i} className="flex justify-between">
+              <span className="truncate">{it.name}{it.qty && it.qty > 1 ? ` ×${it.qty}` : ""}</span>
+              <span>¥{Number(it.price).toLocaleString()}</span>
+            </li>
+          ))}
+          {e.items.length > 4 && <li className="text-xs">외 {e.items.length - 4}개</li>}
+        </ul>
+      )}
+      <div className="mt-3 flex gap-2">
+        <button className="btn-ghost flex-1 text-sm" onClick={() => onEdit(e)}>수정</button>
+        <button className="btn-ghost text-sm text-torii" onClick={() => onRemove(e.id)}>삭제</button>
+      </div>
+    </div>
   );
 }
 

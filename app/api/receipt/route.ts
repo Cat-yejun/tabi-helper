@@ -27,9 +27,10 @@ export async function POST(req: NextRequest) {
               type: "text",
               text:
                 "이 영수증 사진을 분석해 JSON 으로만 답해. 설명·코드펜스 없이 JSON 객체 하나만.\n" +
-                "스키마: {store: string, purchase_date: 'YYYY-MM-DD'|null, currency: string(JPY 등), " +
+                "스키마: {store: string, purchase_date: 'YYYY-MM-DD'|null, purchase_time: 'HH:MM'|null, currency: string(JPY 등), " +
                 "category: '식비'|'교통'|'쇼핑'|'관광'|'숙박'|'기타', total: number, " +
                 "items: [{name: string(한국어로 의역), price: number, qty: number}], note: string}.\n" +
+                "영수증에 인쇄된 날짜와 시간을 정확히 읽어서 purchase_date, purchase_time 에 넣어. 시간이 없으면 purchase_time 은 null. " +
                 "일본어 품목명은 한국어로 자연스럽게 번역하되 원어를 note 에 덧붙여도 됨. " +
                 "읽기 어려우면 최선의 추정값을 넣고 note 에 '추정' 표기. 통화기호 없이 숫자만.",
             },

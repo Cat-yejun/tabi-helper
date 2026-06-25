@@ -16,8 +16,11 @@ export default function InAppCamera({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const trackRef = useRef<MediaStreamTrack | null>(null);
   const [ready, setReady] = useState(false);
   const [err, setErr] = useState("");
+  const [zoom, setZoom] = useState(1);
+  const [zoomRange, setZoomRange] = useState<{ min: number; max: number; step: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,6 +35,14 @@ export default function InAppCamera({
           return;
         }
         streamRef.current = stream;
+        const track = stream.getVideoTracks()[0];
+        trackRef.current = track;
+        // 기기가 광학/디지털 줌을 지원하면 슬라이더 범위 설정
+        const caps: any = track.getCapabilities?.() || {};
+        if (caps.zoom) {
+          setZoomRange({ min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 });
+          setZoom(caps.zoom.min || 1);
+        }
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
@@ -83,6 +94,25 @@ export default function InAppCamera({
         <span className="absolute left-4 top-4 rounded-full bg-black/50 px-2.5 py-1 text-xs text-white">
           📷 사진 촬영
         </span>
+        {zoomRange && (
+          <div className="absolute inset-x-8 bottom-4 flex items-center gap-2 rounded-full bg-black/50 px-4 py-2">
+            <span className="text-xs text-white">🔍</span>
+            <input
+              type="range"
+              min={zoomRange.min}
+              max={zoomRange.max}
+              step={zoomRange.step}
+              value={zoom}
+              onChange={(e) => {
+                const z = Number(e.target.value);
+                setZoom(z);
+                trackRef.current?.applyConstraints?.({ advanced: [{ zoom: z } as any] }).catch(() => {});
+              }}
+              className="flex-1 accent-white"
+            />
+            <span className="w-9 text-right text-xs text-white">{zoom.toFixed(1)}×</span>
+          </div>
+        )}
       </div>
       <div className="flex items-center justify-center bg-black py-6">
         <button
