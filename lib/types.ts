@@ -25,7 +25,12 @@ export type ShoppingItem = {
   note: string | null;
   checked: boolean;
   sort_order: number;
+  price: number;
+  qty: number;
+  category: string;
 };
+
+export const SHOPPING_CATEGORIES = ["식품", "기념품", "화장품", "약", "패션", "기타"] as const;
 
 export type Itinerary = {
   id: string;

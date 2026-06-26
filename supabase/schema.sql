@@ -320,3 +320,10 @@ create policy "own_select" on shopping_items for select using (auth.uid() = user
 create policy "own_insert" on shopping_items for insert with check (auth.uid() = user_id);
 create policy "own_update" on shopping_items for update using (auth.uid() = user_id);
 create policy "own_delete" on shopping_items for delete using (auth.uid() = user_id);
+
+-- ============================================================
+--  마이그레이션 7: 살 것 체크리스트 - 가격/개수/종류
+-- ============================================================
+alter table shopping_items add column if not exists price numeric default 0;
+alter table shopping_items add column if not exists qty int default 1;
+alter table shopping_items add column if not exists category text default '기타';
