@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { PLAN_CATEGORIES, type Itinerary, type ItineraryItem } from "@/lib/types";
+import { PLAN_CATEGORIES, type Itinerary, type ItineraryItem, type Expense } from "@/lib/types";
 import { Header, Spinner, CategoryChip } from "@/components/ui";
 import { loadGoogleMaps } from "@/lib/gmaps";
 
@@ -114,6 +114,7 @@ function ItineraryInner() {
   const [items, setItems] = useState<ItineraryItem[]>([]);
   const [showAI, setShowAI] = useState(false);
   const [sharing, setSharing] = useState<{ trip: Itinerary; url: string } | null>(null);
+  const [diaryOpen, setDiaryOpen] = useState(false);
   const [editing, setEditing] = useState<Partial<ItineraryItem> | null>(null);
 
   async function loadTrips() {
@@ -311,6 +312,9 @@ function ItineraryInner() {
               <button className="btn-ghost flex-1 text-sm text-transit" onClick={() => shareTrip(active)}>
                 🔗 공유
               </button>
+              <button className="btn-ghost flex-1 text-sm text-amber" onClick={() => setDiaryOpen(true)}>
+                📔 기록
+              </button>
               <button className="btn-ghost text-sm text-torii" onClick={() => removeTrip(active)}>
                 삭제
               </button>
@@ -321,6 +325,10 @@ function ItineraryInner() {
 
       {sharing && (
         <ShareSheet itinerary={sharing.trip} url={sharing.url} onClose={() => setSharing(null)} />
+      )}
+
+      {diaryOpen && active && (
+        <DiarySheet trip={active} items={items} onClose={() => setDiaryOpen(false)} />
       )}
 
       {showAI && (
@@ -579,6 +587,140 @@ function ItemSheet({
           <button className="btn-ghost flex-1" onClick={onClose}>취소</button>
           <button className="btn-primary flex-1" onClick={onSave} disabled={!item.place}>저장</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// 여행 기록(일기) 생성/보기 시트
+function DiarySheet({ trip, items, onClose }: { trip: Itinerary; items: ItineraryItem[]; onClose: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [entries, setEntries] = useState<{ date: string; title: string; diary: string }[] | null>(null);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+
+  // 일정 + 가계부를 날짜별·시간순으로 묶기
+  async function buildMaterial() {
+    // 이 여행에 연결된 가계부 + (없으면) 같은 기간 개인 가계부
+    const { data: exp } = await supabase
+      .from("expenses")
+      .select("*")
+      .or(`itinerary_id.eq.${trip.id}${trip.start_date && trip.end_date ? `,and(purchase_date.gte.${trip.start_date},purchase_date.lte.${trip.end_date})` : ""}`);
+    const exps = (exp as Expense[]) || [];
+    setExpenses(exps);
+
+    const dayMap: Record<string, { time: string | null; kind: string; text: string }[]> = {};
+    for (const it of items) {
+      const d = it.day_date || trip.start_date || "미정";
+      (dayMap[d] ||= []).push({ time: it.time || null, kind: it.category || "일정", text: `${it.place}${it.note ? ` — ${it.note}` : ""}` });
+    }
+    for (const e of exps) {
+      const d = e.purchase_date || trip.start_date || "미정";
+      const itemsTxt = (e.items || []).slice(0, 3).map((i) => i.name).join(", ");
+      (dayMap[d] ||= []).push({
+        time: e.purchase_time || null,
+        kind: "지출",
+        text: `${e.store || "가게"}에서 ${itemsTxt || e.category || "지출"} (¥${Math.round(e.total || 0).toLocaleString()})`,
+      });
+    }
+    const days = Object.keys(dayMap).sort().map((date) => ({
+      date,
+      entries: dayMap[date].sort((a, b) => (a.time || "99").localeCompare(b.time || "99")),
+    }));
+    return days;
+  }
+
+  async function generate() {
+    setLoading(true);
+    setErr("");
+    try {
+      const days = await buildMaterial();
+      if (!days.length) { setErr("기록할 일정이 없어요."); setLoading(false); return; }
+      const res = await fetch("/api/diary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: trip.title, days }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setEntries(json.entries);
+    } catch (e: any) {
+      setErr("일기 생성 실패: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const totalSpent = expenses.reduce((s, e) => s + (e.total || 0), 0);
+
+  async function saveImage() {
+    const el = document.getElementById("diary-capture");
+    if (!el) return;
+    try {
+      const html2canvas = (await import("html2canvas")).default;
+      const canvas = await html2canvas(el, { backgroundColor: "#F1F3F6", scale: 2 });
+      const link = document.createElement("a");
+      link.download = `${trip.title}_여행기록.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch {
+      alert("이미지 저장에 실패했어요. 스크린샷으로 대신 저장해 주세요.");
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/40" onClick={onClose}>
+      <div className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-paper p-4" onClick={(e) => e.stopPropagation()}>
+        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-line" />
+
+        {!entries ? (
+          <div className="text-center">
+            <p className="text-4xl">📔</p>
+            <h2 className="mt-2 font-round text-lg font-bold">여행 기록 만들기</h2>
+            <p className="mt-1 mb-4 text-sm text-muted">
+              일정과 가계부(영수증 시간 포함)를 바탕으로 AI가 하루하루를 감성 일기로 써줘요.
+            </p>
+            {err && <p className="mb-2 text-sm text-torii">{err}</p>}
+            <button className="btn-primary w-full" onClick={generate} disabled={loading}>
+              {loading ? "일기 쓰는 중…" : "✨ 여행 일기 생성"}
+            </button>
+            <button className="btn-ghost mt-2 w-full" onClick={onClose}>닫기</button>
+          </div>
+        ) : (
+          <>
+            <div id="diary-capture" className="rounded-2xl bg-paper p-4">
+              <div className="mb-4 text-center">
+                <p className="font-round text-3xl font-extrabold text-ink">旅</p>
+                <h1 className="mt-1 font-round text-xl font-extrabold text-ink">{trip.title}</h1>
+                {trip.start_date && (
+                  <p className="text-xs text-muted">{trip.start_date} ~ {trip.end_date || trip.start_date}</p>
+                )}
+                {totalSpent > 0 && (
+                  <p className="mt-1 text-xs text-torii">총 지출 ¥{Math.round(totalSpent).toLocaleString()}</p>
+                )}
+              </div>
+              <div className="space-y-4">
+                {entries.map((d, i) => (
+                  <div key={i} className="relative border-l-2 border-torii/30 pl-4">
+                    <span className="absolute -left-[7px] top-1 h-3 w-3 rounded-full bg-torii" />
+                    <p className="text-xs font-medium text-torii">{d.date}</p>
+                    <p className="font-round font-bold text-ink">{d.title}</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink/80">{d.diary}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-5 text-center text-[10px] text-muted">旅 Tabi 로 기록한 여행</p>
+            </div>
+
+            <div className="mt-3 space-y-2">
+              <button className="btn-primary w-full" onClick={saveImage}>🖼 이미지로 저장</button>
+              <button className="btn-ghost w-full text-sm" onClick={generate} disabled={loading}>
+                {loading ? "다시 쓰는 중…" : "↻ 다시 생성"}
+              </button>
+              <button className="btn-ghost w-full" onClick={onClose}>닫기</button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
