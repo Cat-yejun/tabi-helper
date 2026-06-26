@@ -327,3 +327,9 @@ create policy "own_delete" on shopping_items for delete using (auth.uid() = user
 alter table shopping_items add column if not exists price numeric default 0;
 alter table shopping_items add column if not exists qty int default 1;
 alter table shopping_items add column if not exists category text default '기타';
+
+-- ============================================================
+--  마이그레이션 8: 일정 항목에 사진/기록 캡션
+-- ============================================================
+alter table itinerary_items add column if not exists photo_url text;
+alter table itinerary_items add column if not exists memo text; -- 기록지용 사용자 메모/캡션

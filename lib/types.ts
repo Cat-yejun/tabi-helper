@@ -53,6 +53,8 @@ export type ItineraryItem = {
   category: string | null;
   note: string | null;
   sort_order: number;
+  photo_url?: string | null;
+  memo?: string | null;
 };
 
 export type ChatMessage = {
