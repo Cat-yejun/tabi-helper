@@ -32,6 +32,19 @@ export type ShoppingItem = {
 
 export const SHOPPING_CATEGORIES = ["식품", "기념품", "화장품", "약", "패션", "기타"] as const;
 
+export type JournalEntry = {
+  id: string;
+  user_id?: string;
+  itinerary_id: string | null;
+  created_at?: string;
+  entry_date: string | null;
+  entry_time: string | null;
+  place: string | null;
+  photo_url: string | null;
+  caption: string | null;
+  sort_order: number;
+};
+
 export type Itinerary = {
   id: string;
   created_at?: string;

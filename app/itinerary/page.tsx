@@ -1,13 +1,12 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { supabase, uploadPhoto } from "@/lib/supabase";
-import { PLAN_CATEGORIES, type Itinerary, type ItineraryItem, type Expense } from "@/lib/types";
+import { supabase } from "@/lib/supabase";
+import { PLAN_CATEGORIES, type Itinerary, type ItineraryItem } from "@/lib/types";
 import { Header, Spinner, CategoryChip } from "@/components/ui";
 import { loadGoogleMaps } from "@/lib/gmaps";
-import { fileToResizedDataUrl, dataUrlToFile } from "@/lib/image";
 
 const vehicleKo: Record<string, string> = {
   SUBWAY: "지하철", HEAVY_RAIL: "열차", COMMUTER_TRAIN: "전철", BUS: "버스",
@@ -115,7 +114,6 @@ function ItineraryInner() {
   const [items, setItems] = useState<ItineraryItem[]>([]);
   const [showAI, setShowAI] = useState(false);
   const [sharing, setSharing] = useState<{ trip: Itinerary; url: string } | null>(null);
-  const [diaryOpen, setDiaryOpen] = useState(false);
   const [editing, setEditing] = useState<Partial<ItineraryItem> | null>(null);
 
   async function loadTrips() {
@@ -333,9 +331,9 @@ function ItineraryInner() {
               <button className="btn-ghost flex-1 text-sm text-transit" onClick={() => shareTrip(active)}>
                 🔗 공유
               </button>
-              <button className="btn-ghost flex-1 text-sm text-amber" onClick={() => setDiaryOpen(true)}>
+              <Link className="btn-ghost flex-1 text-center text-sm text-amber" href="/journal">
                 📔 기록
-              </button>
+              </Link>
               <button className="btn-ghost text-sm text-torii" onClick={() => removeTrip(active)}>
                 삭제
               </button>
@@ -346,10 +344,6 @@ function ItineraryInner() {
 
       {sharing && (
         <ShareSheet itinerary={sharing.trip} url={sharing.url} onClose={() => setSharing(null)} />
-      )}
-
-      {diaryOpen && active && (
-        <DiarySheet trip={active} items={items} onClose={() => setDiaryOpen(false)} />
       )}
 
       {showAI && (
@@ -614,290 +608,6 @@ function ItemSheet({
 }
 
 // 포토 기록지: 장소별 사진 + AI 요약 캡션 + 직접 메모
-function PhotoLog({ trip, items, onClose, onBack }: { trip: Itinerary; items: ItineraryItem[]; onClose: () => void; onBack: () => void }) {
-  const [rows, setRows] = useState<ItineraryItem[]>(items);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
-
-  async function uploadFor(it: ItineraryItem, file: File) {
-    setBusyId(it.id);
-    try {
-      const dataUrl = await fileToResizedDataUrl(file, 1280);
-      const url = await uploadPhoto(dataUrlToFile(dataUrl, "place.jpg"), "places");
-      // 자동 캡션 (메모가 비어있을 때만)
-      let caption = it.memo || "";
-      if (!caption) {
-        try {
-          const res = await fetch("/api/place-caption", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ image: dataUrl, place: it.place, note: it.note }),
-          });
-          const json = await res.json();
-          if (res.ok) caption = json.caption || "";
-        } catch { /* 캡션 실패해도 사진은 저장 */ }
-      }
-      await supabase.from("itinerary_items").update({ photo_url: url, memo: caption }).eq("id", it.id);
-      setRows((arr) => arr.map((x) => (x.id === it.id ? { ...x, photo_url: url, memo: caption } : x)));
-    } catch (e: any) {
-      alert("사진 업로드 실패: " + e.message);
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function saveMemo(it: ItineraryItem, memo: string) {
-    setRows((arr) => arr.map((x) => (x.id === it.id ? { ...x, memo } : x)));
-    await supabase.from("itinerary_items").update({ memo }).eq("id", it.id);
-  }
-
-  async function saveImage() {
-    const el = document.getElementById("photolog-capture");
-    if (!el) return;
-    try {
-      const html2canvas = (await import("html2canvas")).default;
-      const canvas = await html2canvas(el, { backgroundColor: "#F1F3F6", scale: 2, useCORS: true });
-      const link = document.createElement("a");
-      link.download = `${trip.title}_포토기록.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch {
-      alert("이미지 저장에 실패했어요. 스크린샷으로 대신 저장해 주세요.");
-    }
-  }
-
-  // 사진이 있는 항목만 내보내기 캡처 대상에 포함
-  const withPhoto = rows.filter((r) => r.photo_url);
-
-  return (
-    <div>
-      <div className="mb-3 flex items-center justify-between">
-        <button className="text-sm text-muted" onClick={onBack}>← 뒤로</button>
-        <h2 className="font-round text-lg font-bold">📸 포토 기록지</h2>
-        <button className="text-sm text-muted" onClick={onClose}>닫기</button>
-      </div>
-
-      {/* 편집 영역: 각 장소에 사진/메모 */}
-      <div className="space-y-3">
-        {rows.map((it) => (
-          <div key={it.id} className="card p-3">
-            <div className="mb-2 flex items-center gap-2">
-              {it.time && <span className="text-xs font-medium text-transit">{it.time}</span>}
-              <span className="font-medium text-ink">{it.place}</span>
-            </div>
-            <input
-              ref={(el) => { fileRefs.current[it.id] = el; }}
-              type="file" accept="image/*" className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadFor(it, f); }}
-            />
-            {it.photo_url ? (
-              <button onClick={() => fileRefs.current[it.id]?.click()} className="block w-full">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={it.photo_url} alt="" className="w-full rounded-lg object-cover" />
-              </button>
-            ) : (
-              <button
-                className="flex h-24 w-full items-center justify-center rounded-lg border-2 border-dashed border-line text-sm text-muted"
-                onClick={() => fileRefs.current[it.id]?.click()}
-                disabled={busyId === it.id}
-              >
-                {busyId === it.id ? "올리는 중…" : "📷 사진 추가"}
-              </button>
-            )}
-            <textarea
-              className="field mt-2 min-h-[3rem] resize-none text-sm"
-              placeholder={busyId === it.id ? "AI가 캡션 작성 중…" : "이곳에서의 기록 (AI 요약 후 자유롭게 수정)"}
-              value={it.memo || ""}
-              onChange={(e) => setRows((arr) => arr.map((x) => (x.id === it.id ? { ...x, memo: e.target.value } : x)))}
-              onBlur={(e) => saveMemo(it, e.target.value)}
-            />
-          </div>
-        ))}
-      </div>
-
-      {/* 내보내기 미리보기 (사진 있는 것만) */}
-      {withPhoto.length > 0 && (
-        <>
-          <p className="mt-5 mb-2 text-sm font-medium text-ink">내보내기 미리보기</p>
-          <div id="photolog-capture" className="rounded-2xl bg-paper p-4">
-            <div className="mb-4 text-center">
-              <p className="font-round text-2xl font-extrabold text-ink">旅</p>
-              <h1 className="font-round text-lg font-extrabold text-ink">{trip.title}</h1>
-              {trip.start_date && <p className="text-xs text-muted">{trip.start_date} ~ {trip.end_date || trip.start_date}</p>}
-            </div>
-            <div className="space-y-4">
-              {withPhoto.map((it) => (
-                <div key={it.id}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={it.photo_url!} alt="" className="w-full rounded-xl object-cover" crossOrigin="anonymous" />
-                  <p className="mt-1.5 font-round text-sm font-bold text-ink">{it.place}</p>
-                  {it.memo && <p className="text-sm leading-relaxed text-ink/80">{it.memo}</p>}
-                </div>
-              ))}
-            </div>
-            <p className="mt-5 text-center text-[10px] text-muted">旅 Tabi 로 기록한 여행</p>
-          </div>
-          <button className="btn-primary mt-3 w-full" onClick={saveImage}>🖼 이미지로 저장</button>
-        </>
-      )}
-    </div>
-  );
-}
-
-// 여행 기록(일기) 생성/보기 시트
-function DiarySheet({ trip, items, onClose }: { trip: Itinerary; items: ItineraryItem[]; onClose: () => void }) {
-  const [tab, setTab] = useState<"choose" | "diary" | "photo">("choose");
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-  const [entries, setEntries] = useState<{ date: string; title: string; diary: string }[] | null>(null);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-
-  // 일정 + 가계부를 날짜별·시간순으로 묶기
-  async function buildMaterial() {
-    // 이 여행에 연결된 가계부 + (없으면) 같은 기간 개인 가계부
-    const { data: exp } = await supabase
-      .from("expenses")
-      .select("*")
-      .or(`itinerary_id.eq.${trip.id}${trip.start_date && trip.end_date ? `,and(purchase_date.gte.${trip.start_date},purchase_date.lte.${trip.end_date})` : ""}`);
-    const exps = (exp as Expense[]) || [];
-    setExpenses(exps);
-
-    const dayMap: Record<string, { time: string | null; kind: string; text: string }[]> = {};
-    for (const it of items) {
-      const d = it.day_date || trip.start_date || "미정";
-      (dayMap[d] ||= []).push({ time: it.time || null, kind: it.category || "일정", text: `${it.place}${it.note ? ` — ${it.note}` : ""}` });
-    }
-    for (const e of exps) {
-      const d = e.purchase_date || trip.start_date || "미정";
-      const itemsTxt = (e.items || []).slice(0, 3).map((i) => i.name).join(", ");
-      (dayMap[d] ||= []).push({
-        time: e.purchase_time || null,
-        kind: "지출",
-        text: `${e.store || "가게"}에서 ${itemsTxt || e.category || "지출"} (¥${Math.round(e.total || 0).toLocaleString()})`,
-      });
-    }
-    const days = Object.keys(dayMap).sort().map((date) => ({
-      date,
-      entries: dayMap[date].sort((a, b) => (a.time || "99").localeCompare(b.time || "99")),
-    }));
-    return days;
-  }
-
-  async function generate() {
-    setLoading(true);
-    setErr("");
-    try {
-      const days = await buildMaterial();
-      if (!days.length) { setErr("기록할 일정이 없어요."); setLoading(false); return; }
-      const res = await fetch("/api/diary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: trip.title, days }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
-      setEntries(json.entries);
-    } catch (e: any) {
-      setErr("일기 생성 실패: " + e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const totalSpent = expenses.reduce((s, e) => s + (e.total || 0), 0);
-
-  async function saveImage() {
-    const el = document.getElementById("diary-capture");
-    if (!el) return;
-    try {
-      const html2canvas = (await import("html2canvas")).default;
-      const canvas = await html2canvas(el, { backgroundColor: "#F1F3F6", scale: 2 });
-      const link = document.createElement("a");
-      link.download = `${trip.title}_여행기록.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch {
-      alert("이미지 저장에 실패했어요. 스크린샷으로 대신 저장해 주세요.");
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end bg-ink/40" onClick={onClose}>
-      <div className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-paper p-4" onClick={(e) => e.stopPropagation()}>
-        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-line" />
-
-        {tab === "choose" ? (
-          <div className="text-center">
-            <p className="text-4xl">📔</p>
-            <h2 className="mt-2 font-round text-lg font-bold">여행 기록 만들기</h2>
-            <p className="mt-1 mb-4 text-sm text-muted">원하는 방식을 골라주세요.</p>
-            <div className="space-y-2">
-              <button className="btn-primary w-full" onClick={() => { setTab("diary"); }}>
-                ✍️ AI 감성 일기
-                <span className="block text-xs font-normal opacity-80">일정·가계부로 하루를 일기처럼</span>
-              </button>
-              <button className="btn-accent w-full" onClick={() => setTab("photo")}>
-                📸 포토 기록지
-                <span className="block text-xs font-normal opacity-80">장소별 사진 + 간단한 설명</span>
-              </button>
-            </div>
-            <button className="btn-ghost mt-3 w-full" onClick={onClose}>닫기</button>
-          </div>
-        ) : tab === "photo" ? (
-          <PhotoLog trip={trip} items={items} onClose={onClose} onBack={() => setTab("choose")} />
-        ) : !entries ? (
-          <div className="text-center">
-            <p className="text-4xl">✍️</p>
-            <h2 className="mt-2 font-round text-lg font-bold">AI 감성 일기</h2>
-            <p className="mt-1 mb-4 text-sm text-muted">
-              일정과 가계부(영수증 시간 포함)를 바탕으로 AI가 하루하루를 감성 일기로 써줘요.
-            </p>
-            {err && <p className="mb-2 text-sm text-torii">{err}</p>}
-            <button className="btn-primary w-full" onClick={generate} disabled={loading}>
-              {loading ? "일기 쓰는 중…" : "✨ 여행 일기 생성"}
-            </button>
-            <button className="btn-ghost mt-2 w-full" onClick={() => setTab("choose")}>← 뒤로</button>
-          </div>
-        ) : (
-          <>
-            <div id="diary-capture" className="rounded-2xl bg-paper p-4">
-              <div className="mb-4 text-center">
-                <p className="font-round text-3xl font-extrabold text-ink">旅</p>
-                <h1 className="mt-1 font-round text-xl font-extrabold text-ink">{trip.title}</h1>
-                {trip.start_date && (
-                  <p className="text-xs text-muted">{trip.start_date} ~ {trip.end_date || trip.start_date}</p>
-                )}
-                {totalSpent > 0 && (
-                  <p className="mt-1 text-xs text-torii">총 지출 ¥{Math.round(totalSpent).toLocaleString()}</p>
-                )}
-              </div>
-              <div className="space-y-4">
-                {entries.map((d, i) => (
-                  <div key={i} className="relative border-l-2 border-torii/30 pl-4">
-                    <span className="absolute -left-[7px] top-1 h-3 w-3 rounded-full bg-torii" />
-                    <p className="text-xs font-medium text-torii">{d.date}</p>
-                    <p className="font-round font-bold text-ink">{d.title}</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink/80">{d.diary}</p>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-5 text-center text-[10px] text-muted">旅 Tabi 로 기록한 여행</p>
-            </div>
-
-            <div className="mt-3 space-y-2">
-              <button className="btn-primary w-full" onClick={saveImage}>🖼 이미지로 저장</button>
-              <button className="btn-ghost w-full text-sm" onClick={generate} disabled={loading}>
-                {loading ? "다시 쓰는 중…" : "↻ 다시 생성"}
-              </button>
-              <button className="btn-ghost w-full" onClick={onClose}>닫기</button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function ShareSheet({ itinerary, url, onClose }: { itinerary: Itinerary; url: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const [members, setMembers] = useState<{ user_id: string; role: string; username: string }[]>([]);

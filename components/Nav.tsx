@@ -8,10 +8,10 @@ const tabs = [
   { href: "/itinerary", label: "일정", icon: "▤" },
   { href: "/expenses", label: "가계부", icon: "¥" },
   { href: "/shopping", label: "쇼핑", icon: "✓" },
+  { href: "/journal", label: "기록", icon: "📔" },
   { href: "/map", label: "길찾기", icon: "➤" },
   { href: "/translate", label: "번역", icon: "あ" },
   { href: "/assistant", label: "비서", icon: "✦" },
-  { href: "/account", label: "내정보", icon: "◐" },
 ];
 
 export default function Nav() {
